@@ -20,6 +20,7 @@ Context/
 *.user
 *.suo
 .idea/
+.vscode/
 
 # Temp/backup
 *.tmp
