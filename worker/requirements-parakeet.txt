@@ -1,0 +1,3 @@
+torch
+torchaudio
+nemo_toolkit[asr]

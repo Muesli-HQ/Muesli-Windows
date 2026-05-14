@@ -1,0 +1,26 @@
+node_modules/
+dist/
+dist-electron/
+.vite/
+.env
+*.log
+__pycache__/
+.venv/
+.cache/
+bin/
+obj/
+artifacts/
+publish/
+
+# Agent context / handoffs
+Context/
+
+# IDE
+.vs/
+*.user
+*.suo
+.idea/
+
+# Temp/backup
+*.tmp
+*.bak
