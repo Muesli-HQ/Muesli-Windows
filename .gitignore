@@ -24,3 +24,14 @@ Context/
 # Temp/backup
 *.tmp
 *.bak
+
+# Legacy Electron/web stack (not used — WPF is the active app)
+shared/
+src/
+electron/
+index.html
+vite.config.ts
+tsconfig.json
+tsconfig.node.json
+package.json
+package-lock.json
