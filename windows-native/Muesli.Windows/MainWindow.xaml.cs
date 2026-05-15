@@ -1398,11 +1398,34 @@ private void ShowMeetingDetailTab(bool showTranscript)
         ? (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
         : (System.Windows.Media.Brush)FindResource("TextSecondaryBrush");
 }
-private void CopySelectedMeeting_Click(object sender, RoutedEventArgs e)
+private void ExportMeeting_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is System.Windows.Controls.Button button && button.ContextMenu is not null)
+    {
+        button.ContextMenu.PlacementTarget = button;
+        button.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        button.ContextMenu.IsOpen = true;
+    }
+}
+private void ExportMeetingNotes_Click(object sender, RoutedEventArgs e)
 {
     if (_selectedMeeting is not null)
     {
-        CopyMeetingToClipboard(_selectedMeeting);
+        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Notes);
+    }
+}
+private void ExportMeetingTranscript_Click(object sender, RoutedEventArgs e)
+{
+    if (_selectedMeeting is not null)
+    {
+        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Transcript);
+    }
+}
+private void ExportFullMeeting_Click(object sender, RoutedEventArgs e)
+{
+    if (_selectedMeeting is not null)
+    {
+        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.FullMeeting);
     }
 }
 private void CopySelectedMeetingNotes_Click(object sender, RoutedEventArgs e)
@@ -1533,6 +1556,7 @@ private async void ImportMeeting_Click(object sender, RoutedEventArgs e)
             return;
         }
         var summary = await CreateMeetingSummaryAsync(transcript, System.IO.Path.GetFileNameWithoutExtension(dialog.FileName));
+        var wordCount = CountWords(transcript);
         var meeting = new MeetingItem(
             $"meet_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             System.IO.Path.GetFileNameWithoutExtension(dialog.FileName),
@@ -1542,7 +1566,9 @@ private async void ImportMeeting_Click(object sender, RoutedEventArgs e)
             dialog.FileName,
             SelectedModelProfile,
             result.DurationMs,
-            _selectedMeetingFolderId);
+            _selectedMeetingFolderId,
+            wordCount,
+            SelectedSummaryTemplate);
         Meetings.Insert(0, meeting);
         SaveMeetings();
         RefreshMeetingViews();
@@ -1618,6 +1644,7 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
             DeleteFileIfExists(result.MicAudioPath);
             DeleteFileIfExists(result.SystemAudioPath);
         }
+        var wordCount = CountWords(transcript);
         var meeting = new MeetingItem(
             $"meet_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             result.Title,
@@ -1627,7 +1654,9 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
             sourceAudioPath,
             SelectedModelProfile,
             result.DurationMs,
-            _selectedMeetingFolderId);
+            _selectedMeetingFolderId,
+            wordCount,
+            SelectedSummaryTemplate);
         Meetings.Insert(0, meeting);
         SaveMeetings();
         RefreshMeetingViews();
@@ -2942,7 +2971,9 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
                 meeting.SourcePath,
                 meeting.ModelProfile,
                 meeting.DurationMs,
-                meeting.FolderId));
+                meeting.FolderId,
+                meeting.WordCount,
+                meeting.TemplateName));
         }
 
         foreach (var entry in _dataStore.LoadDictionary())
@@ -2984,8 +3015,17 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
             Summary = item.Summary,
             SourcePath = item.SourcePath,
             ModelProfile = item.ModelProfile,
-            FolderId = item.FolderId
+            FolderId = item.FolderId,
+            WordCount = item.WordCount,
+            TemplateName = item.TemplateName
         }));
+    }
+
+    private static int CountWords(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 0;
+        return text.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Length;
     }
 
     private void SaveMeetingFolders()
@@ -3042,7 +3082,9 @@ public sealed record MeetingItem(
     string SourcePath,
     string ModelProfile,
     int DurationMs,
-    string? FolderId)
+    string? FolderId,
+    int WordCount = 0,
+    string TemplateName = "")
 {
     public string Metadata => $"{CreatedAt:yyyy-MM-dd HH:mm} • {DurationLabel}";
 

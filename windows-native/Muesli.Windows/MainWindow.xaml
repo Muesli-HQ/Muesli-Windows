@@ -1157,11 +1157,19 @@
                     </Border>
                   </Grid>
                 </Border>
-                <Button Style="{StaticResource SecondaryButton}" Click="CopySelectedMeeting_Click">
+                <Button Style="{StaticResource SecondaryButton}" Click="ExportMeeting_Click">
                   <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,6,0" />
-                    <TextBlock Text="Copy" />
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,6,0" />
+                    <TextBlock Text="Export" />
+                    <TextBlock Text="&#xE70D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="4,0,0,0" FontSize="10" />
                   </StackPanel>
+                  <Button.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="Export Notes" Click="ExportMeetingNotes_Click" />
+                      <MenuItem Header="Export Transcript" Click="ExportMeetingTranscript_Click" />
+                      <MenuItem Header="Export Full Meeting" Click="ExportFullMeeting_Click" />
+                    </ContextMenu>
+                  </Button.ContextMenu>
                 </Button>
                 <Button Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" Click="OpenSelectedMeetingAudio_Click" Content="Show Recording" />
                 <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" Click="DeleteSelectedMeeting_Click" Content="Delete" Foreground="{DynamicResource ErrorRedBrush}" />

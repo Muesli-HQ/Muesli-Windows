@@ -110,6 +110,8 @@ public sealed record PersistedMeeting
     public string SourcePath { get; init; } = "";
     public string ModelProfile { get; init; } = "";
     public string? FolderId { get; init; }
+    public int WordCount { get; init; }
+    public string TemplateName { get; init; } = "";
 }
 
 public sealed record PersistedMeetingFolder(
