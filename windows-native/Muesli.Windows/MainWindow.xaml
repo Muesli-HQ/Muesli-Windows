@@ -388,6 +388,7 @@
                      BorderThickness="0"
                      Foreground="{DynamicResource TextPrimaryBrush}"
                      HorizontalContentAlignment="Stretch"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      ItemContainerStyle="{StaticResource MuesliListBoxItem}"
                      MouseDoubleClick="DictationsList_MouseDoubleClick">
               <ListBox.ItemTemplate>
@@ -468,6 +469,7 @@
                        BorderThickness="0"
                        Foreground="{DynamicResource TextPrimaryBrush}"
                        HorizontalContentAlignment="Stretch"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                        ItemContainerStyle="{StaticResource MuesliListBoxItem}"
                        MouseDoubleClick="DictationsList_MouseDoubleClick">
                 <ListBox.ItemTemplate>
