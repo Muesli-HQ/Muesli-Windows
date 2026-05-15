@@ -1234,6 +1234,35 @@ private void CopyDictation_Click(object sender, RoutedEventArgs e)
         _toastNotificationService.Show("Copied", item.Text, ToastState.Success);
     }
 }
+private async void DictationRow_Click(object sender, MouseButtonEventArgs e)
+{
+    // Ignore clicks on buttons (Copy/Delete icons)
+    if (e.OriginalSource is System.Windows.Controls.Button or System.Windows.Controls.Image)
+        return;
+    if (sender is not FrameworkElement { DataContext: DictationItem item })
+        return;
+    if (sender is not System.Windows.DependencyObject dep)
+        return;
+
+    // Visual feedback: highlight text
+    if (FindVisualChild<System.Windows.Controls.TextBox>(dep) is { } textBox)
+    {
+        textBox.Focus();
+        textBox.SelectAll();
+    }
+
+    // Copy to clipboard
+    System.Windows.Clipboard.SetText(item.Text);
+    DictationStatus = "Copied to clipboard";
+    _toastNotificationService.Show("Copied", "Dictation copied to clipboard", ToastState.Success, 2000);
+
+    // Remove highlight after brief delay
+    await Task.Delay(300);
+    if (FindVisualChild<System.Windows.Controls.TextBox>(dep) is { } tb)
+    {
+        tb.Select(0, 0);
+    }
+}
 private void DeleteDictation_Click(object sender, RoutedEventArgs e)
 {
     if (sender is FrameworkElement { DataContext: DictationItem item })
@@ -1905,6 +1934,7 @@ private void SetTheme(string theme)
     {
         _theme = theme;
         ApplyTheme(_theme);
+        RefreshNavButtonStyles();
         SaveSettings();
         DictationStatus = theme.Equals("light", StringComparison.OrdinalIgnoreCase)
             ? "Light mode enabled"
@@ -2450,6 +2480,25 @@ private void ShowPage(UIElement activePage, System.Windows.Controls.Button activ
             : (System.Windows.Media.Brush)FindResource("TextSecondaryBrush");
     }
 }
+private void RefreshNavButtonStyles()
+{
+    if (DictationsPage.Visibility == Visibility.Visible)
+        ShowPage(DictationsPage, DictationsNav);
+    else if (MeetingsPage.Visibility == Visibility.Visible)
+        ShowPage(MeetingsPage, MeetingsNav);
+    else if (DictionaryPage.Visibility == Visibility.Visible)
+        ShowPage(DictionaryPage, DictionaryNav);
+    else if (ModelsPage.Visibility == Visibility.Visible)
+        ShowPage(ModelsPage, ModelsNav);
+    else if (ShortcutsPage.Visibility == Visibility.Visible)
+        ShowPage(ShortcutsPage, ShortcutsNav);
+    else if (SettingsPage.Visibility == Visibility.Visible)
+        ShowPage(SettingsPage, SettingsNav);
+    else if (AboutPage.Visibility == Visibility.Visible)
+        ShowPage(AboutPage, AboutNav);
+    else if (SearchPage.Visibility == Visibility.Visible)
+        ShowPage(SearchPage, _lastNonSearchNav ?? DictationsNav);
+}
 private void UpdateSearchPageVisibility()
 {
     if (!string.IsNullOrWhiteSpace(SearchQuery))
@@ -2735,13 +2784,16 @@ private void ApplyTheme(string theme)
     SetColor("BackgroundHover", light ? "#E8E8EC" : "#232528");
     SetColor("SurfacePrimary", light ? "#E5E5EA" : "#262830");
     SetColor("SurfaceSelected", light ? "#D6DFFE" : "#2E3340");
+    SetColor("AccentBlue", light ? "#2563EB" : "#6BA3F7");
     SetColor("TextPrimary", light ? "#E0000000" : "#EBFFFFFF");
-    SetColor("TextSecondary", light ? "#8C000000" : "#9EFFFFFF");
-    SetColor("TextTertiary", light ? "#54000000" : "#66FFFFFF");
+    SetColor("TextSecondary", light ? "#A6000000" : "#9EFFFFFF");
+    SetColor("TextTertiary", light ? "#73000000" : "#66FFFFFF");
     SetBrush("BorderBrushSoft", light ? "#14000000" : "#12FFFFFF");
     SetBrush("BorderBrushMedium", light ? "#1F000000" : "#1CFFFFFF");
     SetBrush("PrimaryButtonBackgroundBrush", light ? "#D6DFFE" : "#26364F");
     SetBrush("PrimaryButtonBorderBrush", light ? "#9BB7F5" : "#3C5D8E");
+    SetBrush("AccentBadgeBackgroundBrush", light ? "#D6E4FF" : "#226BA3F7");
+    SetBrush("SuccessBadgeBackgroundBrush", light ? "#D4F5E0" : "#24342E");
     if (System.Windows.Application.Current?.MainWindow is not null)
     {
         System.Windows.Application.Current.MainWindow.Background = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["BackgroundDeepBrush"];
@@ -2956,6 +3008,20 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
                 SummaryTemplates.Add(template.Name);
             }
         }
+    }
+
+    private static T? FindVisualChild<T>(System.Windows.DependencyObject parent) where T : System.Windows.DependencyObject
+    {
+        for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is T typed)
+                return typed;
+            var result = FindVisualChild<T>(child);
+            if (result != null)
+                return result;
+        }
+        return null;
     }
 }
 

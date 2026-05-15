@@ -27,6 +27,13 @@
     <SolidColorBrush x:Key="BorderBrushMedium" Color="#1CFFFFFF" />
     <SolidColorBrush x:Key="PrimaryButtonBackgroundBrush" Color="#26364F" />
     <SolidColorBrush x:Key="PrimaryButtonBorderBrush" Color="#3C5D8E" />
+    <SolidColorBrush x:Key="ErrorRedBrush" Color="#EF4444" />
+    <SolidColorBrush x:Key="ErrorRedTransparentBrush" Color="#99EF4444" />
+    <SolidColorBrush x:Key="SuccessGreenBrush" Color="#34D399" />
+    <SolidColorBrush x:Key="WarningOrangeBrush" Color="#FF9F43" />
+    <SolidColorBrush x:Key="AccentBadgeBackgroundBrush" Color="#226BA3F7" />
+    <SolidColorBrush x:Key="SuccessBadgeBackgroundBrush" Color="#24342E" />
+    <SolidColorBrush x:Key="DonateButtonForegroundBrush" Color="White" />
     <FontFamily x:Key="MuesliFont">./Assets/fonts/#Inter</FontFamily>
     <FontFamily x:Key="MuesliIconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
 

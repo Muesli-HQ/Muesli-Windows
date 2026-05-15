@@ -298,7 +298,7 @@
           <Border Style="{StaticResource StatCard}">
             <StackPanel HorizontalAlignment="Center">
               <Viewbox Width="20" Height="20" HorizontalAlignment="Center" Margin="0,2,0,8">
-                <Path Fill="#FF9F43" Data="M10,1 C14,5 15,8 13,11 C15,10 16,8 16,6 C18,9 18,14 14,17 C11,20 6,19 4,15 C2,11 4,8 7,6 C7,9 9,10 10,12 C12,9 12,6 10,1 Z" />
+                <Path Fill="{DynamicResource WarningOrangeBrush}" Data="M10,1 C14,5 15,8 13,11 C15,10 16,8 16,6 C18,9 18,14 14,17 C11,20 6,19 4,15 C2,11 4,8 7,6 C7,9 9,10 10,12 C12,9 12,6 10,1 Z" />
               </Viewbox>
               <TextBlock Text="{Binding DayStreak}" Style="{StaticResource StatValue}" />
               <TextBlock Text="day streak" Style="{StaticResource StatLabel}" />
@@ -320,9 +320,9 @@
             <StackPanel HorizontalAlignment="Center">
               <Viewbox Width="20" Height="20" HorizontalAlignment="Center" Margin="0,2,0,8">
                 <Grid Width="20" Height="20">
-                  <Path Stroke="#34D399" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M3,13 A7,7 0 0 1 17,13" />
-                  <Path Stroke="#34D399" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M10,13 L14,8" />
-                  <Ellipse Width="2.8" Height="2.8" Fill="#34D399" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8.6,11.6,0,0" />
+                  <Path Stroke="{DynamicResource SuccessGreenBrush}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M3,13 A7,7 0 0 1 17,13" />
+                  <Path Stroke="{DynamicResource SuccessGreenBrush}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M10,13 L14,8" />
+                  <Ellipse Width="2.8" Height="2.8" Fill="{DynamicResource SuccessGreenBrush}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8.6,11.6,0,0" />
                 </Grid>
               </Viewbox>
               <TextBlock Text="{Binding AverageWpm}" Style="{StaticResource StatValue}" />
@@ -394,7 +394,8 @@
                 <DataTemplate>
                   <Grid Margin="20,16"
                         HorizontalAlignment="Stretch"
-                        Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ListBoxItem}}">
+                        Background="Transparent"
+                        PreviewMouseLeftButtonDown="DictationRow_Click">
                     <Grid.ColumnDefinitions>
                       <ColumnDefinition Width="80" />
                       <ColumnDefinition Width="*" />
@@ -428,7 +429,7 @@
                         </Style>
                       </StackPanel.Style>
                       <Button Style="{StaticResource GhostButton}" Content="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" ToolTip="Copy" Click="CopyDictation_Click" />
-                      <Button Margin="6,0,0,0" Style="{StaticResource GhostButton}" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="#99EF4444" ToolTip="Delete" Click="DeleteDictation_Click" />
+                      <Button Margin="6,0,0,0" Style="{StaticResource GhostButton}" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource ErrorRedTransparentBrush}" ToolTip="Delete" Click="DeleteDictation_Click" />
                     </StackPanel>
                   </Grid>
                 </DataTemplate>
@@ -473,7 +474,8 @@
                   <DataTemplate>
                     <Grid Margin="20,14"
                           HorizontalAlignment="Stretch"
-                          Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ListBoxItem}}">
+                          Background="Transparent"
+                          PreviewMouseLeftButtonDown="DictationRow_Click">
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="80" />
                         <ColumnDefinition Width="*" />
@@ -827,7 +829,7 @@
                   <Button Margin="10,0,0,0" Style="{StaticResource PrimaryButton}" Content="Download selected" Click="DownloadWhisperModel_Click" />
                   <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Open cache" Click="OpenModelCache_Click" />
                   <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Open logs" Click="OpenLogs_Click" />
-                  <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Clear cache" Foreground="#EF4444" Click="ClearModelCache_Click" />
+                  <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Clear cache" Foreground="{DynamicResource ErrorRedBrush}" Click="ClearModelCache_Click" />
                 </StackPanel>
               </StackPanel>
               <Border Grid.Column="1" Height="28" Padding="10,0" CornerRadius="5" Background="{DynamicResource SurfacePrimaryBrush}" VerticalAlignment="Top">
@@ -869,7 +871,7 @@
                 <StackPanel Orientation="Horizontal">
                   <Image Source="Assets/nvidia.png" Width="24" Height="24" Stretch="Uniform" Margin="0,0,10,0" />
                   <TextBlock Text="Parakeet Family" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
-                  <Border Margin="10,0,0,0" Padding="8,3" CornerRadius="5" Background="#226BA3F7">
+                  <Border Margin="10,0,0,0" Padding="8,3" CornerRadius="5" Background="{DynamicResource AccentBadgeBackgroundBrush}">
                     <TextBlock Text="Default: v3" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentBlueBrush}" />
                   </Border>
                 </StackPanel>
@@ -887,8 +889,8 @@
                 </StackPanel>
                 <TextBlock Text="Optional NVIDIA-optimized backend for high-end Windows laptops. Requires optional Parakeet Python dependencies and an NVIDIA CUDA runtime." FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
               </StackPanel>
-              <Border Grid.Column="1" Height="28" Padding="10,0" CornerRadius="5" Background="#24342E" VerticalAlignment="Top">
-                <TextBlock Text="{Binding ParakeetStatusLabel}" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="#34D399" />
+              <Border Grid.Column="1" Height="28" Padding="10,0" CornerRadius="5" Background="{DynamicResource SuccessBadgeBackgroundBrush}" VerticalAlignment="Top">
+                <TextBlock Text="{Binding ParakeetStatusLabel}" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SuccessGreenBrush}" />
               </Border>
             </Grid>
           </Border>
@@ -903,7 +905,7 @@
                 <StackPanel Orientation="Horizontal">
                   <Image Source="Assets/openai.png" Width="24" Height="24" Stretch="Uniform" Margin="0,0,10,0" />
                   <TextBlock Text="Whisper" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
-                  <Border Margin="10,0,0,0" Padding="8,3" CornerRadius="5" Background="#226BA3F7">
+                  <Border Margin="10,0,0,0" Padding="8,3" CornerRadius="5" Background="{DynamicResource AccentBadgeBackgroundBrush}">
                     <TextBlock Text="Default: base" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentBlueBrush}" />
                   </Border>
                 </StackPanel>
@@ -919,8 +921,8 @@
                 </StackPanel>
                 <TextBlock Text="Use tiny/base on basic CPUs, small/medium on stronger CPUs, and large-v3-turbo on high-end NVIDIA laptops." FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
               </StackPanel>
-              <Border Grid.Column="1" Height="28" Padding="10,0" CornerRadius="5" Background="#24342E" VerticalAlignment="Top">
-                <TextBlock Text="{Binding WhisperStatusLabel}" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="#34D399" />
+              <Border Grid.Column="1" Height="28" Padding="10,0" CornerRadius="5" Background="{DynamicResource SuccessBadgeBackgroundBrush}" VerticalAlignment="Top">
+                <TextBlock Text="{Binding WhisperStatusLabel}" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SuccessGreenBrush}" />
               </Border>
             </Grid>
           </Border>
@@ -1074,7 +1076,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
                       <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource AccentBlueBrush}" Margin="0,4,0,0" />
-                      <Button Margin="8,-2,0,0" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="#99EF4444" ToolTip="Delete" Click="DeleteMeeting_Click">
+                      <Button Margin="8,-2,0,0" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource ErrorRedTransparentBrush}" ToolTip="Delete" Click="DeleteMeeting_Click">
                         <Button.Style>
                           <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
                             <Setter Property="Opacity" Value="0" />
@@ -1121,7 +1123,7 @@
                 <TextBlock Text="{Binding SelectedMeetingTitle}" Style="{StaticResource PageTitle}" />
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="{Binding SelectedMeetingMetadata}" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                  <Border Margin="10,-2,0,0" Padding="8,4" CornerRadius="12" Background="#226BA3F7">
+                  <Border Margin="10,-2,0,0" Padding="8,4" CornerRadius="12" Background="{DynamicResource AccentBadgeBackgroundBrush}">
                     <TextBlock Text="Auto Notes" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentBlueBrush}" />
                   </Border>
                 </StackPanel>
@@ -1160,7 +1162,7 @@
                   </StackPanel>
                 </Button>
                 <Button Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" Click="OpenSelectedMeetingAudio_Click" Content="Show Recording" />
-                <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" Click="DeleteSelectedMeeting_Click" Content="Delete" Foreground="#EF4444" />
+                <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" Click="DeleteSelectedMeeting_Click" Content="Delete" Foreground="{DynamicResource ErrorRedBrush}" />
               </StackPanel>
             </Grid>
           </StackPanel>
@@ -1318,7 +1320,7 @@
                         <TextBlock Text="Matching threshold" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                         <Slider Grid.Column="1" Minimum="0.70" Maximum="0.95" SmallChange="0.01" LargeChange="0.05" Value="{Binding MatchingThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         <TextBlock Grid.Column="2" Text="{Binding ThresholdDisplay}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                        <Button Grid.Column="3" Margin="12,0,0,0" Style="{StaticResource GhostButton}" Content="Delete" Foreground="#EF4444" Click="DeleteDictionaryEntry_Click" />
+                        <Button Grid.Column="3" Margin="12,0,0,0" Style="{StaticResource GhostButton}" Content="Delete" Foreground="{DynamicResource ErrorRedBrush}" Click="DeleteDictionaryEntry_Click" />
                         <Button Grid.Column="4" Margin="6,0,0,0" Style="{StaticResource GhostButton}" Content="Save" Click="SaveDictionaryEntry_Click" />
                       </Grid>
                     </StackPanel>
@@ -1416,7 +1418,7 @@
                   <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Support Development" Style="{StaticResource SettingsRowLabel}" />
-                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Donate" Background="#34D399" Foreground="White" Click="Donate_Click" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Donate" Background="{DynamicResource SuccessGreenBrush}" Foreground="{DynamicResource DonateButtonForegroundBrush}" Click="Donate_Click" />
               </Grid>
               <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
               <Grid>
