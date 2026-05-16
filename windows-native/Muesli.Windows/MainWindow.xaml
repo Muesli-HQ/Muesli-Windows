@@ -959,6 +959,37 @@
           </Border>
 
           <Border Style="{StaticResource ContentCard}">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <Image Source="Assets/openai.png" Width="24" Height="24" Stretch="Uniform" Margin="0,0,10,0" />
+                  <TextBlock Text="Speaker Diarization" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Text="Required for Speaker 1 / Speaker 2 labels in meeting transcripts. Uses pyannote.audio to identify individual speakers from system audio." Margin="0,8,0,12" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                  <TextBlock Text="Dependencies" Width="90" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
+                  <TextBlock Text="{Binding DiarizationDependencyStatus, Mode=OneWay}" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                  <TextBlock Text="HF Token" Width="90" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
+                  <TextBlock Text="{Binding DiarizationTokenStatus, Mode=OneWay}" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <Button Style="{StaticResource PrimaryButton}" Content="Test diarization" Click="TestDiarization_Click" />
+                  <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Check setup" Click="RefreshRuntimeDiagnostics_Click" />
+                </StackPanel>
+              </StackPanel>
+              <Border Grid.Column="1" Height="28" Padding="10,0" CornerRadius="5" Background="{DynamicResource SurfacePrimaryBrush}" VerticalAlignment="Top">
+                <TextBlock Text="Optional" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" />
+              </Border>
+            </Grid>
+          </Border>
+
+          <Border Style="{StaticResource ContentCard}">
             <DockPanel>
               <Border DockPanel.Dock="Right" Padding="10,5" CornerRadius="6" Background="{DynamicResource SurfacePrimaryBrush}">
                 <TextBlock Text="Editable" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" />
@@ -1184,6 +1215,24 @@
                         HorizontalScrollBarVisibility="Disabled"
                         Padding="0,0,12,0">
             <StackPanel MaxWidth="980" Margin="0,0,0,24">
+              <StackPanel x:Name="MeetingWarningsPanel" Visibility="Collapsed" Margin="0,14,0,0">
+                <Border Background="#FFFDF0D5" BorderBrush="#FFF4D03F" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                  <StackPanel>
+                    <TextBlock Text="Recording warnings" FontSize="12" FontWeight="SemiBold" Foreground="#FFB45309" Margin="0,0,0,6" />
+                    <ItemsControl x:Name="MeetingWarningsItems">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                          <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="&#xE7BA;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" Foreground="#FFB45309" Margin="0,2,6,0" />
+                            <TextBlock Text="{Binding}" FontSize="12" Foreground="#FFB45309" TextWrapping="Wrap" />
+                          </StackPanel>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+
               <StackPanel x:Name="MeetingNotesPanel">
                 <DockPanel Margin="0,14,0,12">
                   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -1228,6 +1277,8 @@
                   </Button>
                   <TextBlock Text="TRANSCRIPT" Style="{StaticResource SectionLabel}" VerticalAlignment="Center" />
                 </DockPanel>
+
+                <StackPanel x:Name="SpeakerAliasPanel" Margin="0,0,0,12" />
 
                 <Border Background="{DynamicResource BackgroundRaisedBrush}"
                         BorderBrush="{DynamicResource BorderBrushSoft}"

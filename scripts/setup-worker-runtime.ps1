@@ -1,6 +1,7 @@
 param(
     [switch]$WithPostProcessing,
     [switch]$WithParakeet,
+    [switch]$WithDiarization,
     [switch]$CheckOnly
 )
 
@@ -18,6 +19,7 @@ $python = Join-Path $venv "Scripts\python.exe"
 $requirements = Join-Path $appDir "worker\requirements.txt"
 $postRequirements = Join-Path $appDir "worker\requirements-postprocess.txt"
 $parakeetRequirements = Join-Path $appDir "worker\requirements-parakeet.txt"
+$diarizationRequirements = Join-Path $appDir "worker\requirements-diarization.txt"
 
 if (-not (Test-Path $requirements)) {
     throw "Could not find worker requirements at $requirements"
@@ -89,6 +91,13 @@ if ($WithParakeet) {
         throw "Could not find Parakeet requirements at $parakeetRequirements"
     }
     & $python -m pip install -r $parakeetRequirements
+}
+
+if ($WithDiarization) {
+    if (-not (Test-Path $diarizationRequirements)) {
+        throw "Could not find diarization requirements at $diarizationRequirements"
+    }
+    & $python -m pip install -r $diarizationRequirements
 }
 
 Write-Host "Muesli worker runtime is ready at $python"

@@ -99,4 +99,4 @@ public sealed class DictationCoordinator
     }
 }
 
-public sealed record TranscriptionResult(string Text, string? Diagnostic = null, int DurationMs = 0);
+public sealed record TranscriptionResult(string Text, string? Diagnostic = null, int DurationMs = 0, List<TranscriptSegment>? Segments = null);

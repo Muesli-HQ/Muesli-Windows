@@ -20,6 +20,7 @@ MODEL_MAP = {
 MODEL_CACHE: dict[str, Any] = {}
 POST_PROCESSOR_CACHE: dict[str, Any] = {}
 PARAKEET_CACHE: dict[str, Any] = {}
+DIARIZATION_CACHE: dict[str, Any] = {}
 MODEL_RUNTIME_INFO: dict[str, str] = {}
 _NVIDIA_RUNTIME_AVAILABLE: bool | None = None
 
@@ -543,6 +544,158 @@ def transcribe(
         return mock_transcript(title, source, model_profile, str(exc))
 
 
+def get_diarization_pipeline() -> Any:
+    if "diarization" in DIARIZATION_CACHE:
+        return DIARIZATION_CACHE["diarization"]
+
+    # Monkey-patch for newer torchaudio versions that removed audio backend APIs
+    import torchaudio
+    import sys
+    import types
+
+    if not hasattr(torchaudio, "set_audio_backend"):
+        torchaudio.set_audio_backend = lambda backend: None
+    if not hasattr(torchaudio, "get_audio_backend"):
+        torchaudio.get_audio_backend = lambda: "soundfile"
+    if not hasattr(torchaudio, "list_audio_backends"):
+        torchaudio.list_audio_backends = lambda: ["soundfile"]
+    if not hasattr(torchaudio, "backend"):
+        backend_mod = types.ModuleType("torchaudio.backend")
+        backend_mod.soundfile = types.ModuleType("torchaudio.backend.soundfile")
+        backend_mod.sox = types.ModuleType("torchaudio.backend.sox")
+        backend_mod.common = types.ModuleType("torchaudio.backend.common")
+        from collections import namedtuple
+        backend_mod.common.AudioMetaData = namedtuple(
+            "AudioMetaData",
+            ["sample_rate", "num_frames", "num_channels", "bits_per_sample", "encoding"]
+        )
+        torchaudio.backend = backend_mod
+        sys.modules["torchaudio.backend"] = backend_mod
+        sys.modules["torchaudio.backend.soundfile"] = backend_mod.soundfile
+        sys.modules["torchaudio.backend.sox"] = backend_mod.sox
+        sys.modules["torchaudio.backend.common"] = backend_mod.common
+
+    # Monkey-patch for NumPy 2.0+ compatibility (pyannote.audio 3.1.1 uses np.NaN, some deps use np.NAN)
+    import numpy as np
+    if not hasattr(np, "NaN"):
+        np.NaN = np.nan
+    if not hasattr(np, "NAN"):
+        np.NAN = np.nan
+
+    # Monkey-patch for huggingface-hub 1.0+ compatibility
+    # pyannote.audio 3.1.1 passes use_auth_token, which was renamed to token
+    import huggingface_hub
+    _orig_hf_hub_download = huggingface_hub.hf_hub_download
+    def _patched_hf_hub_download(*args, **kwargs):
+        if "use_auth_token" in kwargs:
+            kwargs["token"] = kwargs.pop("use_auth_token")
+        return _orig_hf_hub_download(*args, **kwargs)
+    huggingface_hub.hf_hub_download = _patched_hf_hub_download
+
+    # Monkey-patch for PyTorch 2.6+ weights_only default change
+    # pyannote.audio 3.1.1 checkpoint files need weights_only=False
+    import torch
+    import functools
+    _orig_torch_load = torch.load
+    @functools.wraps(_orig_torch_load)
+    def _patched_torch_load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _patched_torch_load
+
+    from pyannote.audio import Pipeline
+
+    pipeline = Pipeline.from_pretrained(
+        "pyannote/speaker-diarization-3.1",
+        use_auth_token=os.environ.get("HF_TOKEN"),
+    )
+    DIARIZATION_CACHE["diarization"] = pipeline
+    return pipeline
+
+
+def diarize_audio(input_path: str) -> dict[str, Any]:
+    import soundfile as sf
+    import numpy as np
+
+    warnings = []
+    if not os.environ.get("HF_TOKEN"):
+        warnings.append(
+            "HF_TOKEN is not set; pyannote gated models usually require a Hugging Face token with accepted model access."
+        )
+
+    started_at = time.perf_counter()
+    try:
+        pipeline = get_diarization_pipeline()
+        model_ms = (time.perf_counter() - started_at) * 1000
+
+        # Load audio with soundfile to bypass torchaudio backend issues
+        waveform, sample_rate = sf.read(input_path, dtype="float32")
+        if waveform.ndim == 1:
+            waveform = waveform.reshape(1, -1)
+        else:
+            waveform = waveform.T
+
+        import torch
+        waveform_tensor = torch.from_numpy(waveform)
+
+        infer_started_at = time.perf_counter()
+        result = pipeline({"waveform": waveform_tensor, "sample_rate": sample_rate})
+        infer_ms = (time.perf_counter() - infer_started_at) * 1000
+
+        segments = []
+        for turn, _, speaker in result.itertracks(yield_label=True):
+            segments.append(
+                {
+                    "id": f"diarize_{len(segments)}",
+                    "speaker": speaker,
+                    "startMs": int(turn.start * 1000),
+                    "endMs": int(turn.end * 1000),
+                    "text": "",
+                }
+            )
+
+        total_ms = (time.perf_counter() - started_at) * 1000
+        warnings += [
+            "ASR engine: diarization",
+            f"Diarization segments: {len(segments)}",
+            f"Timing diarization model ms: {model_ms:.1f}",
+            f"Timing diarization infer ms: {infer_ms:.1f}",
+            f"Timing diarization total ms: {total_ms:.1f}",
+        ]
+        return {
+            "transcriptText": f"Diarized {len(segments)} segments.",
+            "detectedLanguage": "en",
+            "durationMs": 0,
+            "segments": segments,
+            "warnings": warnings,
+        }
+    except ModuleNotFoundError as exc:
+        warnings += [
+            "Diarization skipped: pyannote.audio not installed.",
+            f"Install with: pip install -r requirements-diarization.txt",
+            f"Error: {exc}",
+        ]
+        return {
+            "transcriptText": "",
+            "detectedLanguage": "en",
+            "durationMs": 0,
+            "segments": [],
+            "warnings": warnings,
+        }
+    except Exception as exc:
+        warnings += [
+            "Diarization failed.",
+            f"Error: {exc}",
+        ]
+        return {
+            "transcriptText": "",
+            "detectedLanguage": "en",
+            "durationMs": 0,
+            "segments": [],
+            "warnings": warnings,
+        }
+
+
 def download_model(kind: str, model: str) -> dict[str, Any]:
     started_at = time.perf_counter()
     if kind == "whisper":
@@ -579,6 +732,21 @@ def download_model(kind: str, model: str) -> dict[str, Any]:
             "segments": [],
             "warnings": [
                 f"Downloaded/loaded post-processor model: {model}",
+                f"Model cache directory: {cache_dir()}",
+                f"Timing model ready ms: {(time.perf_counter() - started_at) * 1000:.1f}",
+            ],
+        }
+
+    if kind == "diarization":
+        os.environ["MUESLI_ALLOW_MODEL_DOWNLOAD"] = "1"
+        get_diarization_pipeline()
+        return {
+            "transcriptText": "Diarization pipeline is ready.",
+            "detectedLanguage": "en",
+            "durationMs": 0,
+            "segments": [],
+            "warnings": [
+                "Diarization model: pyannote/speaker-diarization-3.1",
                 f"Model cache directory: {cache_dir()}",
                 f"Timing model ready ms: {(time.perf_counter() - started_at) * 1000:.1f}",
             ],
@@ -624,6 +792,10 @@ def run_server() -> int:
                     payload.get("kind", "whisper"),
                     payload.get("model", "base"),
                 )
+                print(json.dumps({"id": request_id, "ok": True, "result": result}), flush=True)
+                continue
+            if command == "diarize":
+                result = diarize_audio(payload["input_path"])
                 print(json.dumps({"id": request_id, "ok": True, "result": result}), flush=True)
                 continue
             print(

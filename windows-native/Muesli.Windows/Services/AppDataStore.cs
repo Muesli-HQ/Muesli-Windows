@@ -112,6 +112,8 @@ public sealed record PersistedMeeting
     public string? FolderId { get; init; }
     public int WordCount { get; init; }
     public string TemplateName { get; init; } = "";
+    public Dictionary<string, string> SpeakerAliases { get; init; } = new();
+    public List<string> HealthWarnings { get; init; } = new();
 }
 
 public sealed record PersistedMeetingFolder(

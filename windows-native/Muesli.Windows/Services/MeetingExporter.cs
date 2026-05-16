@@ -17,9 +17,9 @@ public enum MeetingExportMode
 
 public static class MeetingExporter
 {
-    public static void Export(MeetingItem meeting, MeetingExportMode mode)
+    public static void Export(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases = null)
     {
-        var markdown = BuildMarkdown(meeting, mode);
+        var markdown = BuildMarkdown(meeting, mode, aliases);
         var suggestedName = SuggestFilename(meeting, mode);
 
         var dialog = new Microsoft.Win32.SaveFileDialog
@@ -56,8 +56,11 @@ public static class MeetingExporter
         }
     }
 
-    private static string BuildMarkdown(MeetingItem meeting, MeetingExportMode mode)
+    private static string BuildMarkdown(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases)
     {
+        var summary = ApplyAliasesToNotes(meeting.Summary ?? "", aliases);
+        var transcript = ApplyAliases(meeting.Transcript ?? "", aliases);
+
         var parts = new List<string>();
 
         parts.Add($"# {meeting.Title}");
@@ -79,9 +82,9 @@ public static class MeetingExporter
         switch (mode)
         {
             case MeetingExportMode.Notes:
-                if (!string.IsNullOrWhiteSpace(meeting.Summary))
+                if (!string.IsNullOrWhiteSpace(summary))
                 {
-                    parts.Add(meeting.Summary);
+                    parts.Add(summary);
                 }
                 else
                 {
@@ -89,20 +92,20 @@ public static class MeetingExporter
                     parts.Add("");
                     parts.Add("## Raw Transcript");
                     parts.Add("");
-                    parts.Add(meeting.Transcript);
+                    parts.Add(transcript);
                 }
                 break;
 
             case MeetingExportMode.Transcript:
                 parts.Add("## Raw Transcript");
                 parts.Add("");
-                parts.Add(meeting.Transcript);
+                parts.Add(transcript);
                 break;
 
             case MeetingExportMode.FullMeeting:
-                if (!string.IsNullOrWhiteSpace(meeting.Summary))
+                if (!string.IsNullOrWhiteSpace(summary))
                 {
-                    parts.Add(meeting.Summary);
+                    parts.Add(summary);
                 }
                 else
                 {
@@ -113,11 +116,47 @@ public static class MeetingExporter
                 parts.Add("");
                 parts.Add("## Raw Transcript");
                 parts.Add("");
-                parts.Add(meeting.Transcript);
+                parts.Add(transcript);
                 break;
         }
 
         return string.Join(Environment.NewLine, parts);
+    }
+
+    private static string ApplyAliases(string text, Dictionary<string, string>? aliases)
+    {
+        if (string.IsNullOrWhiteSpace(text) || aliases is null || aliases.Count == 0)
+            return text;
+
+        var result = text;
+        foreach (var pair in aliases.OrderByDescending(p => p.Key.Length))
+        {
+            if (!string.IsNullOrWhiteSpace(pair.Value) && pair.Key != pair.Value)
+            {
+                result = result.Replace(pair.Key, pair.Value);
+            }
+        }
+
+        return result;
+    }
+
+    private static string ApplyAliasesToNotes(string text, Dictionary<string, string>? aliases)
+    {
+        if (string.IsNullOrWhiteSpace(text) || aliases is null || aliases.Count == 0)
+            return text;
+
+        var result = text;
+        foreach (var pair in aliases.OrderByDescending(p => p.Key.Length))
+        {
+            if (string.IsNullOrWhiteSpace(pair.Value) || pair.Key == pair.Value)
+                continue;
+
+            var escaped = Regex.Escape(pair.Key);
+            var pattern = new Regex($@"(?<!\w){escaped}(?!\w)");
+            result = pattern.Replace(result, pair.Value);
+        }
+
+        return result;
     }
 
     private static void GeneratePdf(string markdown, string outputPath)

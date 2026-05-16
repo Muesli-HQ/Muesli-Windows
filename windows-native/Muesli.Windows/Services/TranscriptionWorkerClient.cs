@@ -118,6 +118,44 @@ public sealed class TranscriptionWorkerClient : IDisposable
             string.Join(Environment.NewLine, warnings));
     }
 
+    public async Task<DiarizationResult> DiarizeFileAsync(string filePath)
+    {
+        EnsureWorker();
+
+        if (_worker?.StandardInput is null)
+        {
+            throw new InvalidOperationException("Transcription worker did not start.");
+        }
+
+        var id = $"diarize_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}_{Interlocked.Increment(ref _requestId)}";
+        var request = new DiarizationRequest(id, "diarize", new DiarizationPayload(filePath));
+
+        var completion = new TaskCompletionSource<WorkerEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pending[id] = completion;
+        await _worker.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, JsonOptions));
+        await _worker.StandardInput.FlushAsync();
+
+        var envelope = await completion.Task.WaitAsync(TimeSpan.FromMinutes(10));
+        if (!envelope.Ok || envelope.Result is null)
+        {
+            throw new InvalidOperationException(envelope.Error ?? "Diarization failed.");
+        }
+
+        var warnings = envelope.Result.Warnings ?? [];
+        if (!string.IsNullOrWhiteSpace(_stderr))
+        {
+            warnings.Add($"Worker stderr: {_stderr.Trim()}");
+            _stderr = "";
+        }
+
+        return new DiarizationResult(
+            envelope.Result.TranscriptText ?? "",
+            envelope.Result.DetectedLanguage ?? "en",
+            envelope.Result.DurationMs,
+            envelope.Result.Segments?.Select(s => new DiarizedSegment(s.Speaker, s.StartMs, s.EndMs)).ToList() ?? new List<DiarizedSegment>(),
+            warnings);
+    }
+
     private async Task<TranscriptionResult> RequestTranscriptionAsync(WorkerPayload payload)
     {
         EnsureWorker();
@@ -151,7 +189,8 @@ public sealed class TranscriptionWorkerClient : IDisposable
         return new TranscriptionResult(
             envelope.Result.TranscriptText ?? "",
             string.Join(Environment.NewLine, warnings),
-            envelope.Result.DurationMs);
+            envelope.Result.DurationMs,
+            envelope.Result.Segments ?? new List<TranscriptSegment>());
     }
 
     public void Dispose()
@@ -244,51 +283,8 @@ public sealed class TranscriptionWorkerClient : IDisposable
         completion.TrySetResult(envelope);
     }
 
-    private static string FindPythonExecutable()
-    {
-        var candidates = new[]
-        {
-            Environment.GetEnvironmentVariable("MUESLI_PYTHON"),
-            Path.Combine(AppContext.BaseDirectory, ".venv", "Scripts", "python.exe"),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", ".venv", "Scripts", "python.exe")),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "projects", "muesli", ".venv", "Scripts", "python.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python312", "python.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python311", "python.exe"),
-            "python"
-        };
-
-        return candidates.FirstOrDefault(candidate =>
-            !string.IsNullOrWhiteSpace(candidate) &&
-            (candidate == "python" || File.Exists(candidate))) ?? "python";
-    }
-
-    private static string FindWorkerScript()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            var candidate = Path.Combine(directory.FullName, "worker", "transcribe_worker.py");
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            directory = directory.Parent;
-        }
-
-        var userProfileCandidate = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "projects",
-            "muesli",
-            "worker",
-            "transcribe_worker.py");
-        if (File.Exists(userProfileCandidate))
-        {
-            return userProfileCandidate;
-        }
-
-        throw new FileNotFoundException("Could not find worker/transcribe_worker.py.");
-    }
+    private static string FindPythonExecutable() => WorkerRuntimeLocator.FindPythonExecutable();
+    private static string FindWorkerScript() => WorkerRuntimeLocator.FindWorkerScript();
 }
 
 public sealed record TranscriptionOptions(string AsrEngine, string ModelProfile);
@@ -357,5 +353,34 @@ public sealed record TranscriptSegment(
     int EndMs,
     [property: JsonPropertyName("text")]
     string Text);
+
+public sealed record DiarizationRequest(
+    string Id,
+    string Command,
+    DiarizationPayload Payload);
+
+public sealed record DiarizationPayload(
+    [property: JsonPropertyName("input_path")]
+    string InputPath);
+
+public sealed record DiarizationResult(
+    [property: JsonPropertyName("transcriptText")]
+    string? TranscriptText,
+    [property: JsonPropertyName("detectedLanguage")]
+    string? DetectedLanguage,
+    [property: JsonPropertyName("durationMs")]
+    int DurationMs,
+    [property: JsonPropertyName("segments")]
+    List<DiarizedSegment> Segments,
+    [property: JsonPropertyName("warnings")]
+    List<string> Warnings);
+
+public sealed record DiarizedSegment(
+    [property: JsonPropertyName("speakerId")]
+    string SpeakerId,
+    [property: JsonPropertyName("startMs")]
+    int StartMs,
+    [property: JsonPropertyName("endMs")]
+    int EndMs);
 
 public sealed record PostProcessingResult(string Text, string? Diagnostic = null);

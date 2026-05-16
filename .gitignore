@@ -6,6 +6,7 @@ dist-electron/
 *.log
 __pycache__/
 .venv/
+.venv-worker/
 .cache/
 bin/
 obj/

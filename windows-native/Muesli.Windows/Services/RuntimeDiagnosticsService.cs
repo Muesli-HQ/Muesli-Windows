@@ -14,7 +14,7 @@ public sealed class RuntimeDiagnosticsService
         var cacheDirectory = ModelCacheDirectory;
         Directory.CreateDirectory(cacheDirectory);
 
-        var python = FindPythonExecutable();
+        var python = WorkerRuntimeLocator.FindPythonExecutable();
         var pythonVersion = await RunProcessAsync(python, "--version", TimeSpan.FromSeconds(8));
         var dependencyCheck = await RunProcessAsync(
             python,
@@ -32,14 +32,23 @@ public sealed class RuntimeDiagnosticsService
             python,
             "-c \"import torch; print('CUDA available' if torch.cuda.is_available() else 'CUDA not available')\"",
             TimeSpan.FromSeconds(12));
+        var diarizationCheck = await RunProcessAsync(
+            python,
+            "-c \"import numpy as np; np.NaN = np.nan if not hasattr(np, 'NaN') else np.NaN; np.NAN = np.nan if not hasattr(np, 'NAN') else np.NAN; import torchaudio; torchaudio.set_audio_backend = lambda x: None; import pyannote.audio; import soundfile; import torch; print('OK - pyannote diarization dependencies installed.')\"",
+            TimeSpan.FromSeconds(15));
 
-        var workerPath = FindWorkerScriptOrNull();
+        var workerPath = WorkerRuntimeLocator.FindWorkerScriptOrNull();
         var cacheSizeBytes = Directory.Exists(cacheDirectory)
             ? Directory.EnumerateFiles(cacheDirectory, "*", SearchOption.AllDirectories)
                 .Select(path => new FileInfo(path))
                 .Where(file => file.Exists)
                 .Sum(file => file.Length)
             : 0;
+
+        var hfToken = Environment.GetEnvironmentVariable("HF_TOKEN");
+        var tokenStatus = string.IsNullOrWhiteSpace(hfToken)
+            ? "HF_TOKEN not set. pyannote gated models may fail unless already cached and accessible."
+            : "HF_TOKEN set.";
 
         return new RuntimeDiagnostics(
             python,
@@ -48,6 +57,8 @@ public sealed class RuntimeDiagnosticsService
             NormalizeOutput(postProcessCheck),
             NormalizeOutput(parakeetCheck),
             NormalizeOutput(cudaCheck),
+            NormalizeOutput(diarizationCheck),
+            tokenStatus,
             workerPath ?? "worker/transcribe_worker.py not found",
             cacheDirectory,
             cacheSizeBytes,
@@ -184,47 +195,6 @@ public sealed class RuntimeDiagnosticsService
         }
     }
 
-    private static string FindPythonExecutable()
-    {
-        var candidates = new[]
-        {
-            Environment.GetEnvironmentVariable("MUESLI_PYTHON"),
-            Path.Combine(AppContext.BaseDirectory, ".venv", "Scripts", "python.exe"),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", ".venv", "Scripts", "python.exe")),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "projects", "muesli", ".venv", "Scripts", "python.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python312", "python.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python311", "python.exe"),
-            "python"
-        };
-
-        return candidates.FirstOrDefault(candidate =>
-            !string.IsNullOrWhiteSpace(candidate) &&
-            (candidate == "python" || File.Exists(candidate))) ?? "python";
-    }
-
-    private static string? FindWorkerScriptOrNull()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            var candidate = Path.Combine(directory.FullName, "worker", "transcribe_worker.py");
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            directory = directory.Parent;
-        }
-
-        var userProfileCandidate = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "projects",
-            "muesli",
-            "worker",
-            "transcribe_worker.py");
-        return File.Exists(userProfileCandidate) ? userProfileCandidate : null;
-    }
-
     private sealed record ProcessResult(int ExitCode, string Output, string Error);
 }
 
@@ -235,6 +205,8 @@ public sealed record RuntimeDiagnostics(
     string PostProcessingDependencyStatus,
     string ParakeetDependencyStatus,
     string CudaStatus,
+    string DiarizationDependencyStatus,
+    string DiarizationTokenStatus,
     string WorkerScript,
     string ModelCacheDirectory,
     long ModelCacheBytes,
@@ -249,11 +221,13 @@ public sealed record RuntimeDiagnostics(
     };
 
     public string Summary =>
-        $"Python: {PythonVersion}{Environment.NewLine}" +
+        $"Python: {PythonExecutable} ({PythonVersion}){Environment.NewLine}" +
         $"Whisper dependencies: {DependencyStatus}{Environment.NewLine}" +
         $"Qwen dependencies: {PostProcessingDependencyStatus}{Environment.NewLine}" +
         $"Parakeet dependencies: {ParakeetDependencyStatus}{Environment.NewLine}" +
         $"GPU: {CudaStatus}{Environment.NewLine}" +
+        $"Diarization dependencies: {DiarizationDependencyStatus}{Environment.NewLine}" +
+        $"Diarization token: {DiarizationTokenStatus}{Environment.NewLine}" +
         $"Worker: {WorkerScript}{Environment.NewLine}" +
         $"Cache: {ModelCacheDirectory} ({ModelCacheSize}){Environment.NewLine}" +
         ModelStatus;

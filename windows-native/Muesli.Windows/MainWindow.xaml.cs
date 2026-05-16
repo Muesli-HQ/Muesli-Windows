@@ -27,7 +27,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly ToastNotificationService _toastNotificationService = new();
     private readonly ActiveAppPasteService _activeAppPasteService = new();
     private readonly TranscriptionWorkerClient _meetingTranscriptionClient = new();
-    private readonly MeetingRecordingCoordinator _meetingRecordingCoordinator = new();
+    private readonly MeetingRecordingCoordinator _meetingRecordingCoordinator;
     private readonly MeetingDetectionService _meetingDetectionService = new();
     private readonly MeetingPromptService _meetingPromptService = new();
     private readonly TrayIconService _trayIconService = new();
@@ -37,6 +37,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly System.Windows.Threading.DispatcherTimer _meetingAutoStopTimer = new()
     {
         Interval = TimeSpan.FromSeconds(4)
+    };
+    private readonly System.Windows.Threading.DispatcherTimer _aliasSaveDebounceTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(400)
     };
 
     private string _dictationStatus = "Ready";
@@ -79,6 +83,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private System.Windows.Controls.Button? _lastNonSearchNav;
     private string? _selectedMeetingFolderId;
     private MeetingItem? _selectedMeeting;
+    private Dictionary<string, string> _activeSpeakerAliases = new();
     private bool _isMeetingRecording;
     private int _meetingMissingScanCount;
     private string? _currentMeetingTitle;
@@ -86,6 +91,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _modelCacheDirectory = "";
     private string _modelCacheSize = "0 B";
     private string _setupReadiness = "Setup not checked yet.";
+    private string _diarizationDependencyStatus = "Not checked yet.";
+    private string _diarizationTokenStatus = "Not checked yet.";
     private string _meetingDetectionStatus = "Meeting detection has not scanned yet.";
     private double? _indicatorLeft;
     private double? _indicatorTop;
@@ -197,8 +204,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string SelectedMeetingMetadata => _selectedMeeting?.Metadata ?? "";
     public string SelectedMeetingNotes => string.IsNullOrWhiteSpace(_selectedMeeting?.Summary)
         ? "No generated notes yet. The raw transcript is available below."
-        : _selectedMeeting.Summary;
-    public string SelectedMeetingTranscript => _selectedMeeting?.Transcript ?? "";
+        : ApplySpeakerAliasesToNotes(_selectedMeeting.Summary, _activeSpeakerAliases);
+    public string SelectedMeetingTranscript => ApplySpeakerAliases(_selectedMeeting?.Transcript ?? "", _activeSpeakerAliases);
     public string RuntimeDiagnostics
     {
         get => _runtimeDiagnostics;
@@ -213,6 +220,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         get => _modelCacheSize;
         private set => SetField(ref _modelCacheSize, value);
+    }
+    public string DiarizationDependencyStatus
+    {
+        get => _diarizationDependencyStatus;
+        private set => SetField(ref _diarizationDependencyStatus, value);
+    }
+    public string DiarizationTokenStatus
+    {
+        get => _diarizationTokenStatus;
+        private set => SetField(ref _diarizationTokenStatus, value);
     }
 
     public string MeetingDetectionStatus
@@ -541,6 +558,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public MainWindow()
     {
+        _meetingRecordingCoordinator = new(_logService);
         InitializeComponent();
         FilteredDictations = CollectionViewSource.GetDefaultView(Dictations);
         FilteredDictations.Filter = item => PassesDateFilter(item, _dictationDateFilter) && PassesSearch(item);
@@ -593,6 +611,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _toastNotificationService.PositionChanged += OnIndicatorPositionChanged;
         _meetingDetectionService.ScanCompleted += OnMeetingDetectionScanCompleted;
         _meetingAutoStopTimer.Tick += MeetingAutoStopTimer_Tick;
+        _aliasSaveDebounceTimer.Tick += AliasSaveDebounceTimer_Tick;
         _meetingPromptService.Reset();
 OnPropertyChanged(nameof(SelectedMicrophone));
     OnPropertyChanged(nameof(SelectedAsrEngine));
@@ -622,6 +641,8 @@ OnPropertyChanged(nameof(SelectedMicrophone));
     Closing += (_, _) =>
     {
         _logService.Info("Main window closing.");
+        _aliasSaveDebounceTimer.Stop();
+        SaveActiveSpeakerAliases();
         _meetingAutoStopTimer.Stop();
         _meetingDetectionService.ScanCompleted -= OnMeetingDetectionScanCompleted;
         _globalHotkeyService.Dispose();
@@ -1304,6 +1325,9 @@ private void CopyMeetingToClipboard(MeetingItem item)
 private void OpenMeetingDetail(MeetingItem item)
 {
     _selectedMeeting = item;
+    _activeSpeakerAliases = new Dictionary<string, string>(item.SpeakerAliases ?? new Dictionary<string, string>());
+    BuildSpeakerAliasPanel();
+    BuildMeetingWarningsPanel(item);
     OnPropertyChanged(nameof(SelectedMeetingTitle));
     OnPropertyChanged(nameof(SelectedMeetingMetadata));
     OnPropertyChanged(nameof(SelectedMeetingNotes));
@@ -1369,9 +1393,12 @@ private void OpenMeetingDetail_Click(object sender, RoutedEventArgs e)
 }
 private void BackToMeetings_Click(object sender, RoutedEventArgs e)
 {
+    SaveActiveSpeakerAliases();
     _selectedMeeting = null;
     MeetingsBrowserView.Visibility = Visibility.Visible;
     MeetingDetailView.Visibility = Visibility.Collapsed;
+    MeetingWarningsPanel.Visibility = Visibility.Collapsed;
+    MeetingWarningsItems.ItemsSource = null;
 }
 private void ShowMeetingNotesTab_Click(object sender, MouseButtonEventArgs e)
 {
@@ -1398,6 +1425,109 @@ private void ShowMeetingDetailTab(bool showTranscript)
         ? (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
         : (System.Windows.Media.Brush)FindResource("TextSecondaryBrush");
 }
+private void BuildSpeakerAliasPanel()
+{
+    SpeakerAliasPanel.Children.Clear();
+    if (_selectedMeeting is null || string.IsNullOrWhiteSpace(_selectedMeeting.Transcript))
+        return;
+
+    var labels = DetectSpeakerLabels(_selectedMeeting.Transcript);
+    if (labels.Count == 0)
+        return;
+
+    var header = new TextBlock
+    {
+        Text = "Speakers",
+        Style = (Style)FindResource("SectionLabel"),
+        Margin = new Thickness(0, 0, 0, 8)
+    };
+    SpeakerAliasPanel.Children.Add(header);
+
+    var rows = new StackPanel { Orientation = System.Windows.Controls.Orientation.Vertical };
+    foreach (var label in labels)
+    {
+        var row = new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+
+        var labelText = new TextBlock
+        {
+            Text = label,
+            FontSize = 13,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+            Width = 80
+        };
+
+        var aliasBox = new System.Windows.Controls.TextBox
+        {
+            Text = _activeSpeakerAliases.TryGetValue(label, out var alias) ? alias : "",
+            FontSize = 13,
+            Padding = new Thickness(8, 4, 8, 4),
+            Background = (System.Windows.Media.Brush)FindResource("BackgroundHoverBrush"),
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+            BorderBrush = (System.Windows.Media.Brush)FindResource("BorderBrushSoft"),
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Center,
+            Width = 200,
+            Tag = label
+        };
+        aliasBox.TextChanged += (_, _) =>
+        {
+            _activeSpeakerAliases[(string)aliasBox.Tag] = aliasBox.Text;
+            OnPropertyChanged(nameof(SelectedMeetingTranscript));
+            OnPropertyChanged(nameof(SelectedMeetingNotes));
+            _aliasSaveDebounceTimer.Stop();
+            _aliasSaveDebounceTimer.Start();
+        };
+
+        row.Children.Add(labelText);
+        row.Children.Add(aliasBox);
+        rows.Children.Add(row);
+    }
+
+    SpeakerAliasPanel.Children.Add(rows);
+}
+
+private void SaveActiveSpeakerAliases()
+{
+    if (_selectedMeeting is null)
+        return;
+
+    var filtered = _activeSpeakerAliases
+        .Where(p => !string.IsNullOrWhiteSpace(p.Value) && p.Key != p.Value.Trim())
+        .ToDictionary(p => p.Key, p => p.Value.Trim());
+
+    if (filtered.Count == 0 && (_selectedMeeting.SpeakerAliases is null || _selectedMeeting.SpeakerAliases.Count == 0))
+        return;
+
+    var index = Meetings.IndexOf(_selectedMeeting);
+    if (index < 0)
+        return;
+
+    var updated = _selectedMeeting with { SpeakerAliases = filtered };
+    Meetings[index] = updated;
+    _selectedMeeting = updated;
+    SaveMeetings();
+}
+
+private void BuildMeetingWarningsPanel(MeetingItem item)
+{
+    if (item.HealthWarnings is null || item.HealthWarnings.Count == 0)
+    {
+        MeetingWarningsPanel.Visibility = Visibility.Collapsed;
+        MeetingWarningsItems.ItemsSource = null;
+        return;
+    }
+
+    MeetingWarningsItems.ItemsSource = item.HealthWarnings;
+    MeetingWarningsPanel.Visibility = Visibility.Visible;
+}
+
 private void ExportMeeting_Click(object sender, RoutedEventArgs e)
 {
     if (sender is System.Windows.Controls.Button button && button.ContextMenu is not null)
@@ -1411,21 +1541,21 @@ private void ExportMeetingNotes_Click(object sender, RoutedEventArgs e)
 {
     if (_selectedMeeting is not null)
     {
-        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Notes);
+        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Notes, _activeSpeakerAliases);
     }
 }
 private void ExportMeetingTranscript_Click(object sender, RoutedEventArgs e)
 {
     if (_selectedMeeting is not null)
     {
-        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Transcript);
+        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Transcript, _activeSpeakerAliases);
     }
 }
 private void ExportFullMeeting_Click(object sender, RoutedEventArgs e)
 {
     if (_selectedMeeting is not null)
     {
-        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.FullMeeting);
+        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.FullMeeting, _activeSpeakerAliases);
     }
 }
 private void CopySelectedMeetingNotes_Click(object sender, RoutedEventArgs e)
@@ -1444,7 +1574,7 @@ private void CopySelectedMeetingTranscript_Click(object sender, RoutedEventArgs 
     {
         return;
     }
-    System.Windows.Clipboard.SetText(_selectedMeeting.Transcript);
+    System.Windows.Clipboard.SetText(SelectedMeetingTranscript);
     DictationStatus = "Copied transcript";
     _toastNotificationService.Show("Copied transcript", _selectedMeeting.Title, ToastState.Success);
 }
@@ -1656,7 +1786,8 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
             result.DurationMs,
             _selectedMeetingFolderId,
             wordCount,
-            SelectedSummaryTemplate);
+            SelectedSummaryTemplate,
+            HealthWarnings: result.HealthWarnings ?? new List<string>());
         Meetings.Insert(0, meeting);
         SaveMeetings();
         RefreshMeetingViews();
@@ -1711,6 +1842,11 @@ private async void MeetingAutoStopTimer_Tick(object? sender, EventArgs e)
     }
     _logService.Info("Meeting window disappeared; stopping meeting recording automatically.");
     await ToggleMeetingRecordingAsync(null);
+}
+private void AliasSaveDebounceTimer_Tick(object? sender, EventArgs e)
+{
+    _aliasSaveDebounceTimer.Stop();
+    SaveActiveSpeakerAliases();
 }
 private void ResetMeetingRecordingUi(string status)
 {
@@ -1889,6 +2025,24 @@ private async void DownloadQwenModel_Click(object sender, RoutedEventArgs e)
         _toastNotificationService.Show("Qwen download failed", exception.Message, ToastState.Error, 5200);
     }
 }
+private async void TestDiarization_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        DictationStatus = "Testing diarization model";
+        _toastNotificationService.Show("Testing diarization", "Loading pyannote speaker model", ToastState.Transcribing, 0);
+        var result = await _meetingTranscriptionClient.DownloadModelAsync("diarization", "pyannote/speaker-diarization-3.1");
+        DictationStatus = result.Text;
+        _toastNotificationService.Show("Diarization ready", "Speaker model loaded", ToastState.Success, 3600);
+        await RefreshRuntimeDiagnosticsAsync();
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Diarization test failed: {exception.Message}";
+        _logService.Error("Diarization readiness test failed.", exception);
+        _toastNotificationService.Show("Diarization unavailable", exception.Message, ToastState.Error, 6200);
+    }
+}
 private async void TestQwenCleanup_Click(object sender, RoutedEventArgs e)
 {
     try
@@ -1937,6 +2091,7 @@ private void ShowDictations_Click(object sender, RoutedEventArgs e) => ShowPage(
 private void ClearSearch_Click(object sender, RoutedEventArgs e) => SearchQuery = "";
 private void ShowMeetings_Click(object sender, RoutedEventArgs e)
 {
+    SaveActiveSpeakerAliases();
     _selectedMeetingFolderId = null;
     _selectedMeeting = null;
     MeetingsBrowserView.Visibility = Visibility.Visible;
@@ -1996,6 +2151,7 @@ private void AddMeetingFolder_Click(object sender, RoutedEventArgs e)
     }
     var folder = new MeetingFolderItem($"folder_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}", name);
     MeetingFolders.Add(folder);
+    SaveActiveSpeakerAliases();
     _selectedMeetingFolderId = folder.Id;
     _selectedMeeting = null;
     MeetingsBrowserView.Visibility = Visibility.Visible;
@@ -2728,6 +2884,8 @@ private async Task RefreshRuntimeDiagnosticsAsync()
         RuntimeDiagnostics = diagnostics.Summary;
         ModelCacheDirectory = diagnostics.ModelCacheDirectory;
         ModelCacheSize = diagnostics.ModelCacheSize;
+        DiarizationDependencyStatus = diagnostics.DiarizationDependencyStatus;
+        DiarizationTokenStatus = diagnostics.DiarizationTokenStatus;
         SetupReadiness = BuildSetupReadiness(diagnostics);
         _logService.Info($"Runtime diagnostics refreshed. {SetupReadiness.Replace(Environment.NewLine, " | ")}");
     }
@@ -2761,6 +2919,8 @@ private string BuildSetupReadiness(RuntimeDiagnostics diagnostics)
         : "CUDA not available; CPU transcription will be used.");
     lines.Add(qwenOk ? "Qwen cleanup dependencies ready." : "Qwen cleanup dependencies missing; install with -WithPostProcessing if cleanup is needed.");
     lines.Add(parakeetOk ? "Parakeet dependencies ready." : "Parakeet dependencies missing; install with -WithParakeet on NVIDIA machines.");
+    var diarizationOk = diagnostics.DiarizationDependencyStatus.Contains("OK", StringComparison.OrdinalIgnoreCase);
+    lines.Add(diarizationOk ? "Speaker diarization dependencies ready." : "Speaker diarization dependencies missing; install with -WithDiarization for Speaker 1/2 labels.");
     return string.Join(Environment.NewLine, lines);
 }
 private MuesliSettings CurrentSettingsSnapshot()
@@ -2973,7 +3133,9 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
                 meeting.DurationMs,
                 meeting.FolderId,
                 meeting.WordCount,
-                meeting.TemplateName));
+                meeting.TemplateName,
+                meeting.SpeakerAliases,
+                meeting.HealthWarnings));
         }
 
         foreach (var entry in _dataStore.LoadDictionary())
@@ -3017,7 +3179,9 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
             ModelProfile = item.ModelProfile,
             FolderId = item.FolderId,
             WordCount = item.WordCount,
-            TemplateName = item.TemplateName
+            TemplateName = item.TemplateName,
+            SpeakerAliases = item.SpeakerAliases ?? new Dictionary<string, string>(),
+            HealthWarnings = item.HealthWarnings ?? new List<string>()
         }));
     }
 
@@ -3026,6 +3190,57 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
         if (string.IsNullOrWhiteSpace(text))
             return 0;
         return text.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Length;
+    }
+
+    private static string ApplySpeakerAliases(string transcript, Dictionary<string, string> aliases)
+    {
+        if (string.IsNullOrWhiteSpace(transcript) || aliases.Count == 0)
+            return transcript;
+
+        var result = transcript;
+        foreach (var pair in aliases.OrderByDescending(p => p.Key.Length))
+        {
+            if (!string.IsNullOrWhiteSpace(pair.Value) && pair.Key != pair.Value)
+            {
+                result = result.Replace(pair.Key, pair.Value);
+            }
+        }
+
+        return result;
+    }
+
+    private static string ApplySpeakerAliasesToNotes(string notes, Dictionary<string, string> aliases)
+    {
+        if (string.IsNullOrWhiteSpace(notes) || aliases.Count == 0)
+            return notes;
+
+        var result = notes;
+        foreach (var pair in aliases.OrderByDescending(p => p.Key.Length))
+        {
+            if (string.IsNullOrWhiteSpace(pair.Value) || pair.Key == pair.Value)
+                continue;
+
+            var escaped = System.Text.RegularExpressions.Regex.Escape(pair.Key);
+            var pattern = new System.Text.RegularExpressions.Regex($@"(?<!\w){escaped}(?!\w)");
+            result = pattern.Replace(result, pair.Value);
+        }
+
+        return result;
+    }
+
+    private static List<string> DetectSpeakerLabels(string transcript)
+    {
+        if (string.IsNullOrWhiteSpace(transcript))
+            return new List<string>();
+
+        var labels = new System.Collections.Generic.HashSet<string>();
+        var pattern = new System.Text.RegularExpressions.Regex(@"\bSpeaker \d+\b");
+        foreach (System.Text.RegularExpressions.Match match in pattern.Matches(transcript))
+        {
+            labels.Add(match.Value);
+        }
+
+        return labels.OrderBy(l => l).ToList();
     }
 
     private void SaveMeetingFolders()
@@ -3084,7 +3299,9 @@ public sealed record MeetingItem(
     int DurationMs,
     string? FolderId,
     int WordCount = 0,
-    string TemplateName = "")
+    string TemplateName = "",
+    Dictionary<string, string>? SpeakerAliases = null,
+    List<string>? HealthWarnings = null)
 {
     public string Metadata => $"{CreatedAt:yyyy-MM-dd HH:mm} • {DurationLabel}";
 
