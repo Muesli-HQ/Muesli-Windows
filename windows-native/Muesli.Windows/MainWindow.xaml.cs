@@ -1535,14 +1535,15 @@ private void SaveActiveSpeakerAliases()
 
 private void BuildMeetingWarningsPanel(MeetingItem item)
 {
-    if (item.HealthWarnings is null || item.HealthWarnings.Count == 0)
+    var warnings = MeetingRecordingCoordinator.CleanupHealthWarnings(item.HealthWarnings, item.Transcript);
+    if (warnings.Count == 0)
     {
         MeetingWarningsPanel.Visibility = Visibility.Collapsed;
         MeetingWarningsItems.ItemsSource = null;
         return;
     }
 
-    MeetingWarningsItems.ItemsSource = item.HealthWarnings;
+    MeetingWarningsItems.ItemsSource = warnings;
     MeetingWarningsPanel.Visibility = Visibility.Visible;
 }
 
@@ -3322,7 +3323,7 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
                 meeting.WordCount,
                 meeting.TemplateName,
                 meeting.SpeakerAliases,
-                meeting.HealthWarnings));
+                MeetingRecordingCoordinator.CleanupHealthWarnings(meeting.HealthWarnings, meeting.Transcript)));
         }
 
         foreach (var entry in _dataStore.LoadDictionary())
@@ -3370,7 +3371,7 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
             WordCount = item.WordCount,
             TemplateName = item.TemplateName,
             SpeakerAliases = item.SpeakerAliases ?? new Dictionary<string, string>(),
-            HealthWarnings = item.HealthWarnings ?? new List<string>()
+            HealthWarnings = MeetingRecordingCoordinator.CleanupHealthWarnings(item.HealthWarnings, item.Transcript)
         }));
     }
 
