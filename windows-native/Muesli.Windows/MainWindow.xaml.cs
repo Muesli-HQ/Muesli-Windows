@@ -1547,6 +1547,32 @@ private void BuildMeetingWarningsPanel(MeetingItem item)
     MeetingWarningsPanel.Visibility = Visibility.Visible;
 }
 
+private static System.Windows.Controls.Grid CreateWrappedNoteRow(UIElement leading, TextBlock content)
+{
+    var row = new System.Windows.Controls.Grid
+    {
+        Margin = new Thickness(0, 2, 0, 2),
+        HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch
+    };
+    row.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
+    {
+        Width = System.Windows.GridLength.Auto
+    });
+    row.ColumnDefinitions.Add(new System.Windows.Controls.ColumnDefinition
+    {
+        Width = new System.Windows.GridLength(1, System.Windows.GridUnitType.Star)
+    });
+
+    content.TextWrapping = TextWrapping.Wrap;
+    content.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+
+    System.Windows.Controls.Grid.SetColumn(leading, 0);
+    System.Windows.Controls.Grid.SetColumn(content, 1);
+    row.Children.Add(leading);
+    row.Children.Add(content);
+    return row;
+}
+
 private void BuildMeetingNotesContent()
 {
     MeetingNotesContent.Children.Clear();
@@ -1609,25 +1635,23 @@ private void BuildMeetingNotesContent()
         {
             var isChecked = checkboxMatch.Groups[1].Value.Trim().Equals("x", StringComparison.OrdinalIgnoreCase);
             var itemText = checkboxMatch.Groups[2].Value.Trim();
-            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-            row.Children.Add(new TextBlock
+            var icon = new TextBlock
             {
                 Text = isChecked ? "\uE73D" : "\uE739",
                 FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
                 FontSize = 14,
                 Foreground = (System.Windows.Media.Brush)FindResource(isChecked ? "AccentBlueBrush" : "TextSecondaryBrush"),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0)
-            });
-            row.Children.Add(new TextBlock
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 1, 8, 0)
+            };
+            var content = new TextBlock
             {
                 Text = itemText,
                 FontSize = 14,
                 Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
-                TextWrapping = TextWrapping.Wrap,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            MeetingNotesContent.Children.Add(row);
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            MeetingNotesContent.Children.Add(CreateWrappedNoteRow(icon, content));
             continue;
         }
 
@@ -1635,23 +1659,21 @@ private void BuildMeetingNotesContent()
         if (bulletMatch.Success)
         {
             var bulletText = bulletMatch.Groups[1].Value.Trim();
-            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-            row.Children.Add(new TextBlock
+            var bullet = new TextBlock
             {
                 Text = "\u2022",
                 FontSize = 14,
                 Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
                 VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(0, 0, 10, 0)
-            });
-            row.Children.Add(new TextBlock
+            };
+            var content = new TextBlock
             {
                 Text = bulletText,
                 FontSize = 14,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
-                TextWrapping = TextWrapping.Wrap
-            });
-            MeetingNotesContent.Children.Add(row);
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
+            };
+            MeetingNotesContent.Children.Add(CreateWrappedNoteRow(bullet, content));
             continue;
         }
 
@@ -1660,8 +1682,7 @@ private void BuildMeetingNotesContent()
         {
             var number = numberedMatch.Groups[1].Value.Trim();
             var numText = numberedMatch.Groups[2].Value.Trim();
-            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
-            row.Children.Add(new TextBlock
+            var index = new TextBlock
             {
                 Text = number + ".",
                 FontSize = 14,
@@ -1669,15 +1690,14 @@ private void BuildMeetingNotesContent()
                 VerticalAlignment = VerticalAlignment.Top,
                 Margin = new Thickness(0, 0, 10, 0),
                 Width = 20
-            });
-            row.Children.Add(new TextBlock
+            };
+            var content = new TextBlock
             {
                 Text = numText,
                 FontSize = 14,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
-                TextWrapping = TextWrapping.Wrap
-            });
-            MeetingNotesContent.Children.Add(row);
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
+            };
+            MeetingNotesContent.Children.Add(CreateWrappedNoteRow(index, content));
             continue;
         }
 
