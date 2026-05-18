@@ -84,6 +84,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string? _selectedMeetingFolderId;
     private MeetingItem? _selectedMeeting;
     private Dictionary<string, string> _activeSpeakerAliases = new();
+    private bool _lastMeetingDetailShowTranscript = false;
     private bool _isMeetingRecording;
     private int _meetingMissingScanCount;
     private string? _currentMeetingTitle;
@@ -104,6 +105,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<MeetingFolderItem> MeetingFolders { get; } = [];
     public ObservableCollection<MeetingTemplateItem> CustomMeetingTemplates { get; } = [];
     public ObservableCollection<DictionaryEntryItem> DictionaryEntries { get; } = [];
+    public ObservableCollection<UpcomingMeetingItem> UpcomingMeetings { get; } = [];
     public ObservableCollection<string> MicrophoneDevices { get; } = ["System default microphone"];
     public ObservableCollection<string> AsrEngines { get; } = ["whisper", "parakeet-v3"];
     public ObservableCollection<string> ModelProfiles { get; } = ["tiny", "base", "small", "medium", "large-v3-turbo"];
@@ -140,7 +142,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public int DayStreak => Dictations.Count > 0 ? 1 : 0;
+    public int DayStreak => ComputeDayStreak();
     public int WordsDictated => Dictations.Sum(item => item.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
     public string WordsDictatedDisplay => WordsDictated >= 1000 ? $"{WordsDictated / 1000.0:0.0}k" : WordsDictated.ToString();
     public int AverageWpm
@@ -171,6 +173,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public int SearchDictationCount => SearchDictationResults?.Cast<DictationItem>().Count() ?? 0;
     public int SearchMeetingCount => SearchMeetingResults?.Cast<MeetingItem>().Count() ?? 0;
     public string SearchResultsSummary => $"{SearchDictationCount} dictations · {SearchMeetingCount} meetings";
+    public bool HasDictations => FilteredDictations?.Cast<DictationItem>().Any() ?? false;
+    public bool HasMeetings => FilteredMeetings?.Cast<MeetingItem>().Any() ?? false;
+    public bool HasSearchResults => SearchDictationCount > 0 || SearchMeetingCount > 0;
+    public bool HasDictionaryEntries => DictionaryEntries.Count > 0;
+    public bool HasUpcomingMeetings => UpcomingMeetings.Count > 0;
     public string SearchQuery
     {
         get => _searchQuery;
@@ -186,6 +193,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(SearchDictationCount));
                 OnPropertyChanged(nameof(SearchMeetingCount));
                 OnPropertyChanged(nameof(SearchResultsSummary));
+                OnPropertyChanged(nameof(HasDictations));
+                OnPropertyChanged(nameof(HasMeetings));
+                OnPropertyChanged(nameof(HasSearchResults));
                 UpdateSearchPageVisibility();
             }
         }
@@ -569,6 +579,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SearchMeetingResults = new ListCollectionView(Meetings);
         SearchMeetingResults.Filter = item => PassesSearch(item) && !string.IsNullOrWhiteSpace(_searchQuery);
         DataContext = this;
+        UpcomingMeetings.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasUpcomingMeetings));
 
         var settings = _settingsStore.Load();
         LoadPersistedData();
@@ -1328,13 +1339,17 @@ private void OpenMeetingDetail(MeetingItem item)
     _activeSpeakerAliases = new Dictionary<string, string>(item.SpeakerAliases ?? new Dictionary<string, string>());
     BuildSpeakerAliasPanel();
     BuildMeetingWarningsPanel(item);
+    BuildMeetingNotesContent();
     OnPropertyChanged(nameof(SelectedMeetingTitle));
     OnPropertyChanged(nameof(SelectedMeetingMetadata));
     OnPropertyChanged(nameof(SelectedMeetingNotes));
     OnPropertyChanged(nameof(SelectedMeetingTranscript));
     MeetingsBrowserView.Visibility = Visibility.Collapsed;
     MeetingDetailView.Visibility = Visibility.Visible;
-    ShowMeetingDetailTab(showTranscript: false);
+    var showTranscript = string.IsNullOrWhiteSpace(item.Summary) && !string.IsNullOrWhiteSpace(item.Transcript)
+        ? true
+        : _lastMeetingDetailShowTranscript;
+    ShowMeetingDetailTab(showTranscript);
 }
 private void OpenMeetingAudio(MeetingItem item)
 {
@@ -1402,10 +1417,12 @@ private void BackToMeetings_Click(object sender, RoutedEventArgs e)
 }
 private void ShowMeetingNotesTab_Click(object sender, MouseButtonEventArgs e)
 {
+    _lastMeetingDetailShowTranscript = false;
     ShowMeetingDetailTab(showTranscript: false);
 }
 private void ShowMeetingTranscriptTab_Click(object sender, MouseButtonEventArgs e)
 {
+    _lastMeetingDetailShowTranscript = true;
     ShowMeetingDetailTab(showTranscript: true);
 }
 private void ShowMeetingDetailTab(bool showTranscript)
@@ -1481,6 +1498,7 @@ private void BuildSpeakerAliasPanel()
             _activeSpeakerAliases[(string)aliasBox.Tag] = aliasBox.Text;
             OnPropertyChanged(nameof(SelectedMeetingTranscript));
             OnPropertyChanged(nameof(SelectedMeetingNotes));
+            BuildMeetingNotesContent();
             _aliasSaveDebounceTimer.Stop();
             _aliasSaveDebounceTimer.Start();
         };
@@ -1528,7 +1546,152 @@ private void BuildMeetingWarningsPanel(MeetingItem item)
     MeetingWarningsPanel.Visibility = Visibility.Visible;
 }
 
-private void ExportMeeting_Click(object sender, RoutedEventArgs e)
+private void BuildMeetingNotesContent()
+{
+    MeetingNotesContent.Children.Clear();
+
+    var text = SelectedMeetingNotes;
+    if (string.IsNullOrWhiteSpace(text)
+        || text.Equals("No generated notes yet. The raw transcript is available below.", StringComparison.OrdinalIgnoreCase))
+    {
+        MeetingNotesContent.Children.Add(new TextBlock
+        {
+            Text = "No notes yet.",
+            FontSize = 14,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
+            FontStyle = FontStyles.Italic,
+            Margin = new Thickness(0, 8, 0, 8)
+        });
+        return;
+    }
+
+    var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.None);
+    foreach (var rawLine in lines)
+    {
+        var line = rawLine.TrimEnd();
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            MeetingNotesContent.Children.Add(new System.Windows.Controls.Grid { Height = 8 });
+            continue;
+        }
+
+        var headingMatch = System.Text.RegularExpressions.Regex.Match(line, @"^(#{1,3})\s+(.+)$");
+        if (headingMatch.Success)
+        {
+            var level = headingMatch.Groups[1].Value.Length;
+            var headingText = headingMatch.Groups[2].Value.Trim();
+            MeetingNotesContent.Children.Add(new TextBlock
+            {
+                Text = headingText,
+                FontWeight = FontWeights.Bold,
+                FontSize = level == 1 ? 22 : (level == 2 ? 17 : 14),
+                Foreground = (System.Windows.Media.Brush)FindResource(level <= 2 ? "TextPrimaryBrush" : "TextSecondaryBrush"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, level == 1 ? 0 : 12, 0, 6)
+            });
+            continue;
+        }
+
+        if (System.Text.RegularExpressions.Regex.IsMatch(line, @"^---+\s*$"))
+        {
+            MeetingNotesContent.Children.Add(new Border
+            {
+                Height = 1,
+                Background = (System.Windows.Media.Brush)FindResource("BorderBrushSoft"),
+                Margin = new Thickness(0, 8, 0, 8)
+            });
+            continue;
+        }
+
+        var checkboxMatch = System.Text.RegularExpressions.Regex.Match(line, @"^-\s+\[([ xX])\]\s*(.*)$");
+        if (checkboxMatch.Success)
+        {
+            var isChecked = checkboxMatch.Groups[1].Value.Trim().Equals("x", StringComparison.OrdinalIgnoreCase);
+            var itemText = checkboxMatch.Groups[2].Value.Trim();
+            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock
+            {
+                Text = isChecked ? "\uE73D" : "\uE739",
+                FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                FontSize = 14,
+                Foreground = (System.Windows.Media.Brush)FindResource(isChecked ? "AccentBlueBrush" : "TextSecondaryBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = itemText,
+                FontSize = 14,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            MeetingNotesContent.Children.Add(row);
+            continue;
+        }
+
+        var bulletMatch = System.Text.RegularExpressions.Regex.Match(line, @"^[-\u2022]\s+(.+)$");
+        if (bulletMatch.Success)
+        {
+            var bulletText = bulletMatch.Groups[1].Value.Trim();
+            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock
+            {
+                Text = "\u2022",
+                FontSize = 14,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 0, 10, 0)
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = bulletText,
+                FontSize = 14,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+                TextWrapping = TextWrapping.Wrap
+            });
+            MeetingNotesContent.Children.Add(row);
+            continue;
+        }
+
+        var numberedMatch = System.Text.RegularExpressions.Regex.Match(line, @"^(\d+)\.\s+(.+)$");
+        if (numberedMatch.Success)
+        {
+            var number = numberedMatch.Groups[1].Value.Trim();
+            var numText = numberedMatch.Groups[2].Value.Trim();
+            var row = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            row.Children.Add(new TextBlock
+            {
+                Text = number + ".",
+                FontSize = 14,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 0, 10, 0),
+                Width = 20
+            });
+            row.Children.Add(new TextBlock
+            {
+                Text = numText,
+                FontSize = 14,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+                TextWrapping = TextWrapping.Wrap
+            });
+            MeetingNotesContent.Children.Add(row);
+            continue;
+        }
+
+        MeetingNotesContent.Children.Add(new TextBlock
+        {
+            Text = line,
+            FontSize = 14,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 2)
+        });
+    }
+}
+
+private void MoreMeetingActions_Click(object sender, RoutedEventArgs e)
 {
     if (sender is System.Windows.Controls.Button button && button.ContextMenu is not null)
     {
@@ -1806,6 +1969,24 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
         _toastNotificationService.Show("Meeting recording failed", exception.Message, ToastState.Error, 4200);
     }
 }
+private async void JoinAndRecordUpcoming_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: UpcomingMeetingItem item })
+    {
+        if (!string.IsNullOrWhiteSpace(item.MeetingUrl))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(item.MeetingUrl) { UseShellExecute = true });
+        }
+        await ToggleMeetingRecordingAsync(item.Title);
+    }
+}
+private async void RecordOnlyUpcoming_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: UpcomingMeetingItem item })
+    {
+        await ToggleMeetingRecordingAsync(item.Title);
+    }
+}
 private void StartMeetingAutoStopMonitor()
 {
     _meetingMissingScanCount = 0;
@@ -1874,11 +2055,13 @@ private void AddDictionaryEntry_Click(object sender, RoutedEventArgs e)
     DictionaryPhraseBox.Text = "";
     DictionaryReplacementBox.Text = "";
     SaveDictionary();
+    OnPropertyChanged(nameof(HasDictionaryEntries));
 }
 private void SaveDictionaryEntry_Click(object sender, RoutedEventArgs e)
 {
     SaveDictionary();
     DictationStatus = "Dictionary saved";
+    OnPropertyChanged(nameof(HasDictionaryEntries));
 }
 private async void RefreshRuntimeDiagnostics_Click(object sender, RoutedEventArgs e)
 {
@@ -2068,6 +2251,7 @@ private void DeleteDictionaryEntry_Click(object sender, RoutedEventArgs e)
     {
         DictionaryEntries.Remove(item);
         SaveDictionary();
+        OnPropertyChanged(nameof(HasDictionaryEntries));
     }
 }
 private void DictationsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -2079,9 +2263,9 @@ private void DictationsList_MouseDoubleClick(object sender, MouseButtonEventArgs
         _toastNotificationService.Show("Copied", item.Text, ToastState.Success);
     }
 }
-private void MeetingsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+private void MeetingCard_Click(object sender, MouseButtonEventArgs e)
 {
-    if (sender is System.Windows.Controls.ListBox { SelectedItem: MeetingItem item })
+    if (sender is FrameworkElement { DataContext: MeetingItem item })
     {
         OpenMeetingDetail(item);
         ShowPage(MeetingsPage, MeetingsNav);
@@ -2531,6 +2715,7 @@ private void SetDictationFilter_Click(object sender, RoutedEventArgs e)
     FilteredDictations.Refresh();
     OnPropertyChanged(nameof(DictationHeaderLabel));
     OnPropertyChanged(nameof(DictationFilterLabel));
+    OnPropertyChanged(nameof(HasDictations));
 }
 private void SetMeetingFilter_Click(object sender, RoutedEventArgs e)
 {
@@ -2577,6 +2762,7 @@ private void RefreshMeetingViews()
     OnPropertyChanged(nameof(MeetingCount));
     OnPropertyChanged(nameof(VisibleMeetingCount));
     OnPropertyChanged(nameof(CurrentMeetingFolderName));
+    OnPropertyChanged(nameof(HasMeetings));
 }
 private void UpdateMeetingFolderCounts()
 {
@@ -2706,6 +2892,7 @@ private void RefreshSearchResults()
     OnPropertyChanged(nameof(SearchDictationCount));
     OnPropertyChanged(nameof(SearchMeetingCount));
     OnPropertyChanged(nameof(SearchResultsSummary));
+    OnPropertyChanged(nameof(HasSearchResults));
 }
 private void Minimize_Click(object sender, RoutedEventArgs e)
 {
@@ -3142,6 +3329,7 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
         {
             DictionaryEntries.Add(new DictionaryEntryItem(entry));
         }
+        OnPropertyChanged(nameof(HasDictionaryEntries));
 
         foreach (var template in _dataStore.LoadMeetingTemplates())
         {
@@ -3153,6 +3341,7 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
         }
 
         UpdateMeetingFolderCounts();
+        OnPropertyChanged(nameof(DayStreak));
     }
 
     private void SaveDictations()
@@ -3190,6 +3379,46 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
         if (string.IsNullOrWhiteSpace(text))
             return 0;
         return text.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Length;
+    }
+
+    private int ComputeDayStreak()
+    {
+        if (Dictations.Count == 0)
+            return 0;
+
+        var dates = Dictations
+            .Select(d => d.Timestamp.Date)
+            .Distinct()
+            .OrderBy(d => d)
+            .ToList();
+
+        var today = DateTime.Today;
+        var anchor = today;
+        var lastDate = dates.Last();
+
+        if (lastDate == today)
+        {
+            anchor = today;
+        }
+        else if (lastDate == today.AddDays(-1))
+        {
+            anchor = today.AddDays(-1);
+        }
+        else
+        {
+            return 0;
+        }
+
+        var dateSet = new HashSet<DateTime>(dates);
+        var streak = 0;
+        var cursor = anchor;
+        while (dateSet.Contains(cursor))
+        {
+            streak++;
+            cursor = cursor.AddDays(-1);
+        }
+
+        return streak;
     }
 
     private static string ApplySpeakerAliases(string transcript, Dictionary<string, string> aliases)
@@ -3323,6 +3552,18 @@ public sealed record MeetingItem(
             }
 
             return $"{seconds}s";
+        }
+    }
+
+    public string PreviewText
+    {
+        get
+        {
+            var text = string.IsNullOrWhiteSpace(Summary) ? Transcript : Summary;
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+            text = text.Trim();
+            return text.Length > 200 ? text[..200] + "…" : text;
         }
     }
 }

@@ -383,59 +383,67 @@
                   BorderBrush="{DynamicResource BorderBrushSoft}"
                   BorderThickness="1"
                   CornerRadius="10">
-            <ListBox ItemsSource="{Binding FilteredDictations}"
-                     Background="Transparent"
-                     BorderThickness="0"
-                     Foreground="{DynamicResource TextPrimaryBrush}"
-                     HorizontalContentAlignment="Stretch"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                     ItemContainerStyle="{StaticResource MuesliListBoxItem}"
-                     MouseDoubleClick="DictationsList_MouseDoubleClick">
-              <ListBox.ItemTemplate>
-                <DataTemplate>
-                  <Grid Margin="20,16"
-                        HorizontalAlignment="Stretch"
-                        Background="Transparent"
-                        PreviewMouseLeftButtonDown="DictationRow_Click">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="80" />
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="{Binding Time}" FontFamily="Consolas" FontSize="13" FontWeight="SemiBold"
-                               Foreground="{DynamicResource TextTertiaryBrush}" />
-                    <TextBox Grid.Column="1"
-                             Text="{Binding Text}"
-                             TextWrapping="Wrap"
-                             AcceptsReturn="True"
-                             FontSize="14"
-                             Foreground="{DynamicResource TextPrimaryBrush}"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             IsReadOnly="True"
-                             Cursor="IBeam"
-                             Padding="0"
-                             HorizontalScrollBarVisibility="Disabled"
-                             VerticalScrollBarVisibility="Disabled"
-                             SelectionBrush="{DynamicResource AccentBlueBrush}" />
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="14,-4,0,0">
-                      <StackPanel.Style>
-                        <Style TargetType="StackPanel">
-                          <Setter Property="Opacity" Value="0" />
-                          <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                              <Setter Property="Opacity" Value="1" />
-                            </DataTrigger>
-                          </Style.Triggers>
-                        </Style>
-                      </StackPanel.Style>
-                      <Button Style="{StaticResource GhostButton}" Content="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" ToolTip="Copy" Click="CopyDictation_Click" />
-                      <Button Margin="6,0,0,0" Style="{StaticResource GhostButton}" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource ErrorRedTransparentBrush}" ToolTip="Delete" Click="DeleteDictation_Click" />
-                    </StackPanel>
-                  </Grid>
-                </DataTemplate>
-              </ListBox.ItemTemplate>
-            </ListBox>
+            <Grid>
+              <ListBox ItemsSource="{Binding FilteredDictations}"
+                       Background="Transparent"
+                       BorderThickness="0"
+                       Foreground="{DynamicResource TextPrimaryBrush}"
+                       HorizontalContentAlignment="Stretch"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                       ItemContainerStyle="{StaticResource MuesliListBoxItem}"
+                       MouseDoubleClick="DictationsList_MouseDoubleClick"
+                       Visibility="{Binding HasDictations, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="20,16"
+                          HorizontalAlignment="Stretch"
+                          Background="Transparent"
+                          PreviewMouseLeftButtonDown="DictationRow_Click">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="80" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="{Binding Time}" FontFamily="Consolas" FontSize="13" FontWeight="SemiBold"
+                                 Foreground="{DynamicResource TextTertiaryBrush}" />
+                      <TextBox Grid.Column="1"
+                               Text="{Binding Text}"
+                               TextWrapping="Wrap"
+                               AcceptsReturn="True"
+                               FontSize="14"
+                               Foreground="{DynamicResource TextPrimaryBrush}"
+                               Background="Transparent"
+                               BorderThickness="0"
+                               IsReadOnly="True"
+                               Cursor="IBeam"
+                               Padding="0"
+                               HorizontalScrollBarVisibility="Disabled"
+                               VerticalScrollBarVisibility="Disabled"
+                               SelectionBrush="{DynamicResource AccentBlueBrush}" />
+                      <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="14,-4,0,0">
+                        <StackPanel.Style>
+                          <Style TargetType="StackPanel">
+                            <Setter Property="Opacity" Value="0" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                <Setter Property="Opacity" Value="1" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </StackPanel.Style>
+                        <Button Style="{StaticResource GhostButton}" Content="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" ToolTip="Copy" Click="CopyDictation_Click" />
+                        <Button Margin="6,0,0,0" Style="{StaticResource GhostButton}" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource ErrorRedTransparentBrush}" ToolTip="Delete" Click="DeleteDictation_Click" />
+                      </StackPanel>
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <StackPanel Style="{StaticResource EmptyStatePanel}" Visibility="{Binding HasDictations, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                <TextBlock Text="&#xE70F;" Style="{StaticResource EmptyStateIcon}" />
+                <TextBlock Text="No dictations yet" Style="{StaticResource EmptyStateTitle}" />
+                <TextBlock Text="Hold your shortcut to dictate. Transcripts will appear here." Style="{StaticResource EmptyStateBody}" />
+              </StackPanel>
+            </Grid>
           </Border>
         </Grid>
       </Grid>
@@ -451,11 +459,12 @@
           <TextBlock Text="{Binding SearchResultsSummary}" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
         </StackPanel>
 
-        <ScrollViewer Grid.Row="1"
-                      VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled"
-                      Padding="0,0,12,0">
-          <StackPanel MaxWidth="980" Margin="0,0,0,24">
+         <Grid Grid.Row="1">
+           <ScrollViewer VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Disabled"
+                         Padding="0,0,12,0"
+                         Visibility="{Binding HasSearchResults, Converter={StaticResource BooleanToVisibilityConverter}}">
+             <StackPanel MaxWidth="980" Margin="0,0,0,24">
             <DockPanel Margin="0,0,0,12">
               <TextBlock Text="DICTATIONS" Style="{StaticResource SectionLabel}" VerticalAlignment="Center" />
             </DockPanel>
@@ -519,16 +528,17 @@
                      Background="Transparent"
                      BorderThickness="0"
                      Foreground="{DynamicResource TextPrimaryBrush}"
-                     ItemContainerStyle="{StaticResource MuesliListBoxItem}"
-                     MouseDoubleClick="MeetingsList_MouseDoubleClick">
+                     ItemContainerStyle="{StaticResource MuesliListBoxItem}">
               <ListBox.ItemTemplate>
                 <DataTemplate>
                   <Border Background="{DynamicResource BackgroundRaisedBrush}"
                           BorderBrush="{DynamicResource BorderBrushSoft}"
                           BorderThickness="1"
-                          CornerRadius="14"
+                          CornerRadius="10"
                           Padding="16"
-                          Margin="0,0,0,12">
+                          Margin="0,0,0,10"
+                          Cursor="Hand"
+                          MouseLeftButtonUp="MeetingCard_Click">
                     <Grid>
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -536,24 +546,38 @@
                       </Grid.ColumnDefinitions>
                       <StackPanel>
                         <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{Binding Metadata}" Margin="0,8,0,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
-                        <TextBox Text="{Binding Summary}" Margin="0,10,0,0" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" IsReadOnly="True" Foreground="{DynamicResource TextTertiaryBrush}" Cursor="IBeam" FontSize="13" MaxHeight="44" />
+                        <TextBlock Text="{Binding Metadata}" Margin="0,6,0,0" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding PreviewText}"
+                                   Margin="0,8,0,0"
+                                   TextWrapping="Wrap"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="13"
+                                   MaxHeight="38"
+                                   LineHeight="19" />
                       </StackPanel>
-                      <Button Grid.Column="1"
-                              Margin="12,-2,0,0"
-                              Style="{StaticResource GhostButton}"
-                              Content="Open"
-                              Click="OpenMeetingDetail_Click" />
+                      <TextBlock Grid.Column="1"
+                                 Text="&#xE8B7;"
+                                 FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                 FontSize="14"
+                                 Foreground="{DynamicResource AccentBlueBrush}"
+                                 Margin="0,2,0,0" />
                     </Grid>
                   </Border>
                 </DataTemplate>
               </ListBox.ItemTemplate>
-            </ListBox>
+             </ListBox>
+           </StackPanel>
+         </ScrollViewer>
+         <StackPanel Style="{StaticResource EmptyStatePanel}" Visibility="{Binding HasSearchResults, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+           <TextBlock Text="&#xE721;" Style="{StaticResource EmptyStateIcon}" />
+           <TextBlock Text="No results found" Style="{StaticResource EmptyStateTitle}" />
+           <TextBlock Text="Try a different search term." Style="{StaticResource EmptyStateBody}" />
           </StackPanel>
-        </ScrollViewer>
+        </Grid>
       </Grid>
 
-      <Grid x:Name="SettingsPage" Visibility="Collapsed">
+       <Grid x:Name="SettingsPage" Visibility="Collapsed">
         <ScrollViewer VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       Padding="0,0,12,0">
@@ -1034,100 +1058,150 @@
         <Grid x:Name="MeetingsBrowserView">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
           </Grid.RowDefinitions>
-          <Grid Grid.Row="0" Margin="0,0,0,22">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel>
-              <TextBlock Text="{Binding CurrentMeetingFolderName}" Style="{StaticResource PageTitle}" />
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding VisibleMeetingCount}" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                <TextBlock Text=" meetings" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
-                <TextBlock Text="  •  " FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
-                <TextBlock Text="Open a meeting to review notes, transcript, and template-driven summaries" FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
-              </StackPanel>
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-              <Button Style="{StaticResource GhostButton}" Click="ToggleMeetingSort_Click">
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Text="↕" Margin="0,0,6,0" />
-                  <TextBlock Text="{Binding MeetingSortLabel}" />
-                </StackPanel>
-              </Button>
-              <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" ToolTip="{Binding MeetingFilterLabel}" Click="OpenButtonContextMenu_Click">
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Text="☰" />
-                  <TextBlock Text="{Binding MeetingFilterLabel}" Margin="6,0,0,0" />
-                  <TextBlock Text="⌄" Margin="6,-1,0,0" />
-                </StackPanel>
-                <Button.ContextMenu>
-                  <ContextMenu>
-                    <MenuItem Header="All time" Tag="all" Click="SetMeetingFilter_Click" />
-                    <MenuItem Header="Last 2 days" Tag="last2Days" Click="SetMeetingFilter_Click" />
-                    <MenuItem Header="Last week" Tag="lastWeek" Click="SetMeetingFilter_Click" />
-                    <MenuItem Header="Last 2 weeks" Tag="last2Weeks" Click="SetMeetingFilter_Click" />
-                    <MenuItem Header="Last month" Tag="lastMonth" Click="SetMeetingFilter_Click" />
-                    <MenuItem Header="Last 3 months" Tag="last3Months" Click="SetMeetingFilter_Click" />
-                  </ContextMenu>
-                </Button.ContextMenu>
-              </Button>
-              <Button Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Click="ManageTemplates_Click" Content="Manage Templates" />
-              <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" Click="ToggleMeetingRecording_Click" Content="{Binding MeetingRecordingButtonText}" />
-              <Button Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Click="ImportMeeting_Click" Content="Import media" />
-            </StackPanel>
-          </Grid>
-          <Grid Grid.Row="1">
-            <ListBox ItemsSource="{Binding FilteredMeetings}"
-                     Background="Transparent"
-                     BorderThickness="0"
-                     Foreground="{DynamicResource TextPrimaryBrush}"
-                     ItemContainerStyle="{StaticResource MuesliListBoxItem}"
-                     MouseDoubleClick="MeetingsList_MouseDoubleClick">
-              <ListBox.ItemTemplate>
+
+          <StackPanel Grid.Row="0" Visibility="{Binding HasUpcomingMeetings, Converter={StaticResource BooleanToVisibilityConverter}}" Margin="0,0,0,22">
+            <TextBlock Text="Coming Up" FontSize="22" FontWeight="Medium" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,16" />
+            <ItemsControl ItemsSource="{Binding UpcomingMeetings}" Background="Transparent" BorderThickness="0">
+              <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Border Background="{DynamicResource BackgroundRaisedBrush}"
-                          BorderBrush="{DynamicResource BorderBrushSoft}"
-                          BorderThickness="1"
-                          CornerRadius="10"
-                          Padding="20"
-                          Margin="0,0,0,12">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                      <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
-                      <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                        <TextBlock Text="{Binding Metadata}" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+                  <Border Background="{DynamicResource BackgroundRaisedBrush}" BorderBrush="{DynamicResource BorderBrushSoft}" BorderThickness="1" CornerRadius="12" Padding="20,16" Margin="0,0,0,10">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="{Binding DayNumber}" FontSize="24" FontWeight="Light" Foreground="{DynamicResource TextPrimaryBrush}" HorizontalAlignment="Center" />
+                        <TextBlock Text="{Binding DayLabel}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center" />
+                        <TextBlock Text="{Binding DayOfWeek}" FontSize="10" Foreground="{DynamicResource TextSecondaryBrush}" HorizontalAlignment="Center" />
                       </StackPanel>
-                      <TextBox Text="{Binding Summary}" Margin="0,12,0,0" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" IsReadOnly="True" Foreground="{DynamicResource TextSecondaryBrush}" Cursor="IBeam" FontSize="13" MaxHeight="44" />
-                      <TextBox Text="{Binding Transcript}" Margin="0,6,0,0" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" IsReadOnly="True" Foreground="{DynamicResource TextTertiaryBrush}" Cursor="IBeam" FontSize="13" MaxHeight="44" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                      <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" Foreground="{DynamicResource AccentBlueBrush}" Margin="0,4,0,0" />
-                      <Button Margin="8,-2,0,0" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource ErrorRedTransparentBrush}" ToolTip="Delete" Click="DeleteMeeting_Click">
-                        <Button.Style>
-                          <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
-                            <Setter Property="Opacity" Value="0" />
-                            <Style.Triggers>
-                              <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                                <Setter Property="Opacity" Value="1" />
-                              </DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </Button.Style>
-                      </Button>
-                    </StackPanel>
-                  </Grid>
+                      <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding TimeRange}" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,0" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource PrimaryButton}" Click="JoinAndRecordUpcoming_Click" Visibility="{Binding HasUrl, Converter={StaticResource BooleanToVisibilityConverter}}">
+                          <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE714;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="9" Margin="0,0,4,0" />
+                            <TextBlock Text="Join &amp; Record" FontSize="10" />
+                          </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource SecondaryButton}" Click="RecordOnlyUpcoming_Click" Visibility="{Binding HasUrl, Converter={StaticResource InverseBooleanToVisibilityConverter}}" Content="Record meeting" />
+                      </StackPanel>
+                    </Grid>
                   </Border>
                 </DataTemplate>
-              </ListBox.ItemTemplate>
-            </ListBox>
-          </Grid>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+
+           <Grid Grid.Row="1" Margin="0,0,0,22">
+             <Grid.ColumnDefinitions>
+               <ColumnDefinition Width="*" />
+               <ColumnDefinition Width="Auto" />
+             </Grid.ColumnDefinitions>
+             <StackPanel>
+               <TextBlock Text="{Binding CurrentMeetingFolderName}" Style="{StaticResource PageTitle}" />
+               <StackPanel Orientation="Horizontal">
+                 <TextBlock Text="{Binding VisibleMeetingCount}" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+                 <TextBlock Text=" meetings" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" />
+               </StackPanel>
+             </StackPanel>
+             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+               <Button Style="{StaticResource GhostButton}" Click="ToggleMeetingSort_Click">
+                 <StackPanel Orientation="Horizontal">
+                   <TextBlock Text="↕" Margin="0,0,6,0" />
+                   <TextBlock Text="{Binding MeetingSortLabel}" />
+                 </StackPanel>
+               </Button>
+               <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" ToolTip="{Binding MeetingFilterLabel}" Click="OpenButtonContextMenu_Click">
+                 <StackPanel Orientation="Horizontal">
+                   <TextBlock Text="☰" />
+                   <TextBlock Text="{Binding MeetingFilterLabel}" Margin="6,0,0,0" />
+                   <TextBlock Text="⌄" Margin="6,-1,0,0" />
+                 </StackPanel>
+                 <Button.ContextMenu>
+                   <ContextMenu>
+                     <MenuItem Header="All time" Tag="all" Click="SetMeetingFilter_Click" />
+                     <MenuItem Header="Last 2 days" Tag="last2Days" Click="SetMeetingFilter_Click" />
+                     <MenuItem Header="Last week" Tag="lastWeek" Click="SetMeetingFilter_Click" />
+                     <MenuItem Header="Last 2 weeks" Tag="last2Weeks" Click="SetMeetingFilter_Click" />
+                     <MenuItem Header="Last month" Tag="lastMonth" Click="SetMeetingFilter_Click" />
+                     <MenuItem Header="Last 3 months" Tag="last3Months" Click="SetMeetingFilter_Click" />
+                   </ContextMenu>
+                 </Button.ContextMenu>
+               </Button>
+               <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" Click="ManageTemplates_Click" Content="Manage Templates" />
+               <Button Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Click="ToggleMeetingRecording_Click" Content="{Binding MeetingRecordingButtonText}" />
+               <Button Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" Click="ImportMeeting_Click" Content="Import media" />
+             </StackPanel>
+           </Grid>
+           <Grid Grid.Row="2">
+             <ListBox ItemsSource="{Binding FilteredMeetings}"
+                      Background="Transparent"
+                      BorderThickness="0"
+                      Foreground="{DynamicResource TextPrimaryBrush}"
+                      ItemContainerStyle="{StaticResource MuesliListBoxItem}"
+                      Visibility="{Binding HasMeetings, Converter={StaticResource BooleanToVisibilityConverter}}">
+               <ListBox.ItemTemplate>
+                 <DataTemplate>
+                   <Border Background="{DynamicResource BackgroundRaisedBrush}"
+                           BorderBrush="{DynamicResource BorderBrushSoft}"
+                           BorderThickness="1"
+                           CornerRadius="10"
+                           Padding="16"
+                           Margin="0,0,0,10"
+                           Cursor="Hand"
+                           MouseLeftButtonUp="MeetingCard_Click">
+                     <Grid>
+                       <Grid.ColumnDefinitions>
+                         <ColumnDefinition Width="*" />
+                         <ColumnDefinition Width="Auto" />
+                       </Grid.ColumnDefinitions>
+                       <StackPanel>
+                         <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                           <TextBlock Text="{Binding Metadata}" FontSize="12" Foreground="{DynamicResource TextSecondaryBrush}" />
+                         </StackPanel>
+                         <TextBlock Text="{Binding PreviewText}"
+                                    Margin="0,8,0,0"
+                                    TextWrapping="Wrap"
+                                    TextTrimming="CharacterEllipsis"
+                                    Foreground="{DynamicResource TextSecondaryBrush}"
+                                    FontSize="13"
+                                    MaxHeight="38"
+                                    LineHeight="19" />
+                       </StackPanel>
+                       <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                         <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Foreground="{DynamicResource AccentBlueBrush}" Margin="0,2,0,0" />
+                         <Button Margin="6,-2,0,0" Content="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource ErrorRedTransparentBrush}" ToolTip="Delete" Click="DeleteMeeting_Click">
+                           <Button.Style>
+                             <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                               <Setter Property="Opacity" Value="0" />
+                               <Style.Triggers>
+                                 <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                   <Setter Property="Opacity" Value="1" />
+                                 </DataTrigger>
+                               </Style.Triggers>
+                             </Style>
+                           </Button.Style>
+                         </Button>
+                       </StackPanel>
+                     </Grid>
+                   </Border>
+                 </DataTemplate>
+               </ListBox.ItemTemplate>
+             </ListBox>
+             <StackPanel Style="{StaticResource EmptyStatePanel}" Visibility="{Binding HasMeetings, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+               <TextBlock Text="&#xE720;" Style="{StaticResource EmptyStateIcon}" />
+               <TextBlock Text="No meetings yet" Style="{StaticResource EmptyStateTitle}" />
+               <TextBlock Text="Click Record or Import to capture your first meeting." Style="{StaticResource EmptyStateBody}" />
+             </StackPanel>
+           </Grid>
         </Grid>
 
         <Grid x:Name="MeetingDetailView" Visibility="Collapsed">
@@ -1188,22 +1262,24 @@
                     </Border>
                   </Grid>
                 </Border>
-                <Button Style="{StaticResource SecondaryButton}" Click="ExportMeeting_Click">
+                <Button Style="{StaticResource GhostButton}" Click="MoreMeetingActions_Click">
                   <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,6,0" />
-                    <TextBlock Text="Export" />
-                    <TextBlock Text="&#xE70D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="4,0,0,0" FontSize="10" />
+                    <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,4,0" />
+                    <TextBlock Text="More" />
                   </StackPanel>
                   <Button.ContextMenu>
                     <ContextMenu>
                       <MenuItem Header="Export Notes" Click="ExportMeetingNotes_Click" />
                       <MenuItem Header="Export Transcript" Click="ExportMeetingTranscript_Click" />
                       <MenuItem Header="Export Full Meeting" Click="ExportFullMeeting_Click" />
+                      <Separator />
+                      <MenuItem Header="Show Recording" Click="OpenSelectedMeetingAudio_Click" />
+                      <MenuItem Header="Move to Folder" Click="MoveSelectedMeeting_Click" />
+                      <Separator />
+                      <MenuItem Header="Delete Meeting" Foreground="{DynamicResource ErrorRedBrush}" Click="DeleteSelectedMeeting_Click" />
                     </ContextMenu>
                   </Button.ContextMenu>
                 </Button>
-                <Button Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" Click="OpenSelectedMeetingAudio_Click" Content="Show Recording" />
-                <Button Margin="8,0,0,0" Style="{StaticResource GhostButton}" Click="DeleteSelectedMeeting_Click" Content="Delete" Foreground="{DynamicResource ErrorRedBrush}" />
               </StackPanel>
             </Grid>
           </StackPanel>
@@ -1236,8 +1312,7 @@
               <StackPanel x:Name="MeetingNotesPanel">
                 <DockPanel Margin="0,14,0,12">
                   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button Style="{StaticResource SecondaryButton}" Click="MoveSelectedMeeting_Click" Content="Move" />
-                    <Button Margin="8,0,0,0" Style="{StaticResource SecondaryButton}" Click="CopySelectedMeetingNotes_Click">
+                    <Button Style="{StaticResource SecondaryButton}" Click="CopySelectedMeetingNotes_Click">
                       <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,6,0" />
                         <TextBlock Text="Copy Notes" />
@@ -1253,17 +1328,7 @@
                         CornerRadius="10"
                         Padding="24"
                         Margin="0,0,0,24">
-                  <TextBox Text="{Binding SelectedMeetingNotes, Mode=OneWay}"
-                           TextWrapping="Wrap"
-                           AcceptsReturn="True"
-                           Background="Transparent"
-                           BorderThickness="0"
-                           IsReadOnly="True"
-                           Foreground="{DynamicResource TextPrimaryBrush}"
-                           Cursor="IBeam"
-                           FontSize="14"
-                           MinHeight="360"
-                           SelectionBrush="{DynamicResource AccentBlueBrush}" />
+                  <StackPanel x:Name="MeetingNotesContent" />
                 </Border>
               </StackPanel>
 
@@ -1358,7 +1423,7 @@
                            VerticalAlignment="Center" />
               </Grid>
               <Border Height="1" Background="{DynamicResource BorderBrushSoft}" />
-              <ListBox ItemsSource="{Binding DictionaryEntries}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" ItemContainerStyle="{StaticResource MuesliListBoxItem}">
+              <ListBox ItemsSource="{Binding DictionaryEntries}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimaryBrush}" ItemContainerStyle="{StaticResource MuesliListBoxItem}" Visibility="{Binding HasDictionaryEntries, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ListBox.ItemTemplate>
                   <DataTemplate>
                     <StackPanel Margin="16,16">
@@ -1388,6 +1453,11 @@
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
+              <StackPanel Margin="0,32" Visibility="{Binding HasDictionaryEntries, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                <TextBlock Text="&#xE70F;" Style="{StaticResource EmptyStateIcon}" />
+                <TextBlock Text="No custom dictionary entries yet" Style="{StaticResource EmptyStateTitle}" />
+                <TextBlock Text="Add a word or phrase above to improve transcription accuracy." Style="{StaticResource EmptyStateBody}" />
+              </StackPanel>
             </StackPanel>
           </Border>
         </StackPanel>

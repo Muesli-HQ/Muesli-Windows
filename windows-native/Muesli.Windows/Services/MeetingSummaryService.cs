@@ -15,27 +15,78 @@ public static class MeetingSummaryService
 
     public static string CreateSummary(string transcript, string template = "standard")
     {
-        var clean = Regex.Replace(transcript, @"\s+", " ").Trim();
-        if (string.IsNullOrWhiteSpace(clean))
+        if (string.IsNullOrWhiteSpace(transcript))
         {
             return "";
         }
 
-        var sentences = Regex.Split(clean, @"(?<=[.!?])\s+")
-            .Select(sentence => sentence.Trim())
-            .Where(sentence => sentence.Length > 0)
-            .ToList();
+        var lines = transcript.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var turns = new List<(string Speaker, string Text)>();
 
-        var summarySentences = sentences.Count <= 4
-            ? sentences
-            : sentences.Take(2).Concat(sentences.TakeLast(2)).ToList();
+        // Detect timestamped speaker lines: [HH:mm:ss] Speaker: text
+        var timestampPattern = new Regex(@"^\[\d{2}:\d{2}:\d{2}\]\s+(?<speaker>[^:]+):\s*(?<text>.+)$");
+        // Detect legacy blocks: [You] text or [System audio] text
+        var legacyPattern = new Regex(@"^\[(?<speaker>[^\]]+)\]\s*(?<text>.+)$");
 
-        var bullets = summarySentences
-            .Select(sentence => sentence.Trim().TrimStart('-', '•').Trim())
-            .Where(sentence => sentence.Length > 0)
-            .Select(sentence => $"- {sentence}");
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+                continue;
 
-        var bulletText = string.Join(Environment.NewLine, bullets);
+            var match = timestampPattern.Match(trimmed);
+            if (!match.Success)
+            {
+                match = legacyPattern.Match(trimmed);
+            }
+
+            if (match.Success)
+            {
+                var speaker = match.Groups["speaker"].Value.Trim();
+                var text = match.Groups["text"].Value.Trim();
+                if (text.Length > 0)
+                {
+                    turns.Add((speaker, text));
+                }
+            }
+        }
+
+        string bulletText;
+        if (turns.Count > 0)
+        {
+            // Use at most the first 6 meaningful turns
+            var selectedTurns = turns.Take(6).ToList();
+            var bullets = selectedTurns.Select(t =>
+            {
+                var text = t.Text;
+                if (text.Length > 220)
+                {
+                    text = text[..217].TrimEnd() + "...";
+                }
+                return $"- {t.Speaker}: {text}";
+            });
+            bulletText = string.Join(Environment.NewLine, bullets);
+        }
+        else
+        {
+            // Fallback to sentence-based extraction for non-timestamped transcripts
+            var clean = Regex.Replace(transcript, @"\s+", " ").Trim();
+            var sentences = Regex.Split(clean, @"(?<=[.!?])\s+")
+                .Select(sentence => sentence.Trim())
+                .Where(sentence => sentence.Length > 0)
+                .ToList();
+
+            var summarySentences = sentences.Count <= 4
+                ? sentences
+                : sentences.Take(2).Concat(sentences.TakeLast(2)).ToList();
+
+            var bullets = summarySentences
+                .Select(sentence => sentence.Trim().TrimStart('-', '•').Trim())
+                .Where(sentence => sentence.Length > 0)
+                .Select(sentence => $"- {sentence}");
+
+            bulletText = string.Join(Environment.NewLine, bullets);
+        }
         if (template.Equals("standup", StringComparison.OrdinalIgnoreCase))
         {
             return "## Meeting Summary" + Environment.NewLine + bulletText +
