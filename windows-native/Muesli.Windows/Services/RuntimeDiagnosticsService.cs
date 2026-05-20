@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 
 namespace Muesli.Windows.Services;
 
@@ -50,6 +51,8 @@ public sealed class RuntimeDiagnosticsService
             ? "HF_TOKEN not set. pyannote gated models may fail unless already cached and accessible."
             : "HF_TOKEN set.";
 
+        var setupScript = WorkerRuntimeLocator.FindSetupScriptOrNull();
+
         return new RuntimeDiagnostics(
             python,
             NormalizeOutput(pythonVersion),
@@ -60,9 +63,21 @@ public sealed class RuntimeDiagnosticsService
             NormalizeOutput(diarizationCheck),
             tokenStatus,
             workerPath ?? "worker/transcribe_worker.py not found",
+            setupScript ?? "setup-worker-runtime.ps1 not found",
             cacheDirectory,
             cacheSizeBytes,
             BuildModelStatus(cacheDirectory));
+    }
+
+    public async Task<RuntimeSetupResult> InstallLocalRuntimeAsync(Action<string>? onProgress = null)
+    {
+        var setupScript = WorkerRuntimeLocator.FindSetupScriptOrNull();
+        if (string.IsNullOrWhiteSpace(setupScript) || !File.Exists(setupScript))
+        {
+            return new RuntimeSetupResult(false, "Setup script is missing from this build.", "");
+        }
+
+        return await RunSetupProcessAsync(setupScript, onProgress);
     }
 
     public bool IsWhisperModelCached(string model)
@@ -195,6 +210,75 @@ public sealed class RuntimeDiagnosticsService
         }
     }
 
+    private static async Task<RuntimeSetupResult> RunSetupProcessAsync(string setupScript, Action<string>? onProgress)
+    {
+        var output = new StringBuilder();
+        var summary = "Local transcription runtime setup failed.";
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "powershell",
+                Arguments = $"-ExecutionPolicy Bypass -File \"{setupScript}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(setupScript) ?? AppContext.BaseDirectory
+            };
+
+            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            process.Start();
+
+            async Task PumpAsync(StreamReader reader, bool isError)
+            {
+                while (true)
+                {
+                    var line = await reader.ReadLineAsync();
+                    if (line is null)
+                    {
+                        break;
+                    }
+
+                    if (line.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    output.AppendLine(line);
+                    onProgress?.Invoke(line);
+                    if (isError && summary == "Local transcription runtime setup failed.")
+                    {
+                        summary = line;
+                    }
+                }
+            }
+
+            await Task.WhenAll(
+                PumpAsync(process.StandardOutput, isError: false),
+                PumpAsync(process.StandardError, isError: true),
+                process.WaitForExitAsync());
+
+            if (process.ExitCode == 0)
+            {
+                return new RuntimeSetupResult(true, "Local transcription runtime installed.", output.ToString());
+            }
+
+            if (summary == "Local transcription runtime setup failed.")
+            {
+                summary = $"Setup exited with code {process.ExitCode}.";
+            }
+
+            return new RuntimeSetupResult(false, summary, output.ToString());
+        }
+        catch (Exception exception)
+        {
+            output.AppendLine(exception.ToString());
+            return new RuntimeSetupResult(false, exception.Message, output.ToString());
+        }
+    }
+
     private sealed record ProcessResult(int ExitCode, string Output, string Error);
 }
 
@@ -208,6 +292,7 @@ public sealed record RuntimeDiagnostics(
     string DiarizationDependencyStatus,
     string DiarizationTokenStatus,
     string WorkerScript,
+    string SetupScript,
     string ModelCacheDirectory,
     long ModelCacheBytes,
     string ModelStatus)
@@ -229,6 +314,9 @@ public sealed record RuntimeDiagnostics(
         $"Diarization dependencies: {DiarizationDependencyStatus}{Environment.NewLine}" +
         $"Diarization token: {DiarizationTokenStatus}{Environment.NewLine}" +
         $"Worker: {WorkerScript}{Environment.NewLine}" +
+        $"Setup script: {SetupScript}{Environment.NewLine}" +
         $"Cache: {ModelCacheDirectory} ({ModelCacheSize}){Environment.NewLine}" +
         ModelStatus;
 }
+
+public sealed record RuntimeSetupResult(bool Success, string Summary, string Detail);

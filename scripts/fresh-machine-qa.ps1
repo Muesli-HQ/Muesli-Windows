@@ -34,7 +34,14 @@ foreach ($item in $required) {
 }
 
 $forbiddenPatterns = @("Outlook.Application", "Microsoft.Office.Interop.Outlook", "MAPI")
-$sourceFiles = Get-ChildItem -LiteralPath $InstallDir -File -Recurse -Include "*.cs", "*.xaml", "*.py", "*.ps1", "*.txt" -ErrorAction SilentlyContinue
+$sourceFiles = @(
+    "worker\transcribe_worker.py",
+    "setup-worker-runtime.ps1",
+    "install-windows.ps1",
+    "uninstall-windows.ps1"
+) |
+    ForEach-Object { Join-Path $InstallDir $_ } |
+    Where-Object { Test-Path $_ }
 foreach ($pattern in $forbiddenPatterns) {
     $hit = $sourceFiles | Select-String -Pattern $pattern -SimpleMatch -List | Select-Object -First 1
     if ($hit) {

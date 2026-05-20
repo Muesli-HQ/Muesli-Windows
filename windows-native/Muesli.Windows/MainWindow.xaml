@@ -1398,6 +1398,17 @@
               <StackPanel x:Name="MeetingNotesPanel">
                 <DockPanel Margin="0,14,0,12">
                   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <ComboBox Width="210"
+                              Margin="0,0,10,0"
+                              Style="{StaticResource MuesliComboBox}"
+                              ItemsSource="{Binding SummaryTemplates}"
+                              SelectedItem="{Binding SelectedMeetingTemplate}" />
+                    <Button Margin="0,0,10,0" Style="{StaticResource PrimaryButton}" Click="GenerateSelectedMeetingNotes_Click">
+                      <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE70F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,6,0" />
+                        <TextBlock Text="{Binding SelectedMeetingNotesActionLabel}" />
+                      </StackPanel>
+                    </Button>
                     <Button Style="{StaticResource SecondaryButton}" Click="CopySelectedMeetingNotes_Click">
                       <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Margin="0,0,6,0" />

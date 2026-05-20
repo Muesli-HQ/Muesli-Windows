@@ -12,16 +12,6 @@ public static class WorkerRuntimeLocator
             return envPath;
         }
 
-        var repoRoot = FindRepoRoot();
-        if (repoRoot is not null)
-        {
-            var devWorkerVenv = Path.Combine(repoRoot, ".venv-worker", "Scripts", "python.exe");
-            if (File.Exists(devWorkerVenv))
-            {
-                return devWorkerVenv;
-            }
-        }
-
         var appLocalVenv = Path.Combine(AppContext.BaseDirectory, ".venv", "Scripts", "python.exe");
         if (File.Exists(appLocalVenv))
         {
@@ -34,18 +24,14 @@ public static class WorkerRuntimeLocator
             return parentVenv;
         }
 
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        var userDevWorkerVenv = Path.Combine(userProfile, "projects", "muesli", ".venv-worker", "Scripts", "python.exe");
-        if (File.Exists(userDevWorkerVenv))
+        var repoRoot = FindRepoRoot();
+        if (repoRoot is not null)
         {
-            return userDevWorkerVenv;
-        }
-
-        var userDevVenv = Path.Combine(userProfile, "projects", "muesli", ".venv", "Scripts", "python.exe");
-        if (File.Exists(userDevVenv))
-        {
-            return userDevVenv;
+            var devWorkerVenv = Path.Combine(repoRoot, ".venv-worker", "Scripts", "python.exe");
+            if (File.Exists(devWorkerVenv))
+            {
+                return devWorkerVenv;
+            }
         }
 
         var python312 = Path.Combine(
@@ -99,6 +85,55 @@ public static class WorkerRuntimeLocator
             "worker",
             "transcribe_worker.py");
         return File.Exists(userProfileCandidate) ? userProfileCandidate : null;
+    }
+
+    public static string? FindSetupScriptOrNull()
+    {
+        var direct = Path.Combine(AppContext.BaseDirectory, "setup-worker-runtime.ps1");
+        if (File.Exists(direct))
+        {
+            return direct;
+        }
+
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "scripts", "setup-worker-runtime.ps1");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        var userProfileCandidate = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "projects",
+            "muesli",
+            "scripts",
+            "setup-worker-runtime.ps1");
+        return File.Exists(userProfileCandidate) ? userProfileCandidate : null;
+    }
+
+    public static bool HasWorkerRequirementsLayout()
+    {
+        var workerScript = FindWorkerScriptOrNull();
+        if (string.IsNullOrWhiteSpace(workerScript))
+        {
+            return false;
+        }
+
+        var workerDirectory = Path.GetDirectoryName(workerScript);
+        if (string.IsNullOrWhiteSpace(workerDirectory))
+        {
+            return false;
+        }
+
+        return File.Exists(Path.Combine(workerDirectory, "requirements.txt")) &&
+               File.Exists(Path.Combine(workerDirectory, "requirements-diarization.txt")) &&
+               File.Exists(Path.Combine(workerDirectory, "requirements-postprocess.txt")) &&
+               File.Exists(Path.Combine(workerDirectory, "requirements-parakeet.txt"));
     }
 
     private static string? FindRepoRoot()

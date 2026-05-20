@@ -13,103 +13,177 @@ public static class MeetingSummaryService
         Timeout = TimeSpan.FromSeconds(90)
     };
 
-    public static string CreateSummary(string transcript, string template = "standard")
+    private static readonly string[] BuiltIns =
+    [
+        "Auto",
+        "Standard Meeting Notes",
+        "1:1",
+        "Customer Discovery",
+        "Stand-up",
+        "Weekly Team Meeting",
+        "Hiring Interview",
+        "Sales Call",
+        "Product Review",
+        "Incident Review"
+    ];
+
+    private static readonly Dictionary<string, string> TemplateAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["auto"] = "Auto",
+        ["standard"] = "Standard Meeting Notes",
+        ["standard meeting notes"] = "Standard Meeting Notes",
+        ["1 to 1"] = "1:1",
+        ["1:1"] = "1:1",
+        ["one on one"] = "1:1",
+        ["customer"] = "Customer Discovery",
+        ["customer discovery"] = "Customer Discovery",
+        ["standup"] = "Stand-up",
+        ["stand-up"] = "Stand-up",
+        ["weekly team meeting"] = "Weekly Team Meeting",
+        ["hiring"] = "Hiring Interview",
+        ["hiring interview"] = "Hiring Interview",
+        ["sales"] = "Sales Call",
+        ["sales call"] = "Sales Call",
+        ["product review"] = "Product Review",
+        ["incident"] = "Incident Review",
+        ["incident review"] = "Incident Review"
+    };
+
+    private static readonly Regex TimestampPattern = new(@"^\[(?:\d{2}:)?\d{2}:\d{2}\]\s+(?<speaker>[^:]+):\s*(?<text>.+)$", RegexOptions.Compiled);
+    private static readonly Regex LegacyPattern = new(@"^\[(?<speaker>[^\]]+)\]\s*(?<text>.+)$", RegexOptions.Compiled);
+    private static readonly Regex WhitespacePattern = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex ActionPattern = new(@"\b(action item|todo|to do|follow up|follow-up|next step|can you|please|i will|i'll|we need to|need to|send|schedule|review|prepare|investigate|owner)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex DecisionPattern = new(@"\b(decided|agreed|approved|resolved|move forward|ship|selected|chose|choose|plan is|going with|we'll use|we will use)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex QuestionPattern = new(@"\?|(\bquestion\b|\bunclear\b|\bnot sure\b|\bneed to know\b|\bfigure out\b)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex RiskPattern = new(@"\b(blocker|blocked|risk|issue|concern|dependency|delay|problem|broken|escalate)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex PainPattern = new(@"\b(problem|pain|manual|slow|friction|difficult|hard|broken|can't|cannot|missing|annoying)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WorkflowPattern = new(@"\b(currently|today|right now|workflow|process|using|use today|manually|today they|current setup)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BuyingSignalPattern = new(@"\b(budget|timeline|quarter|urgent|priority|decision|buy|purchase|pilot|contract|renewal|security review|procurement)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex PositiveSignalPattern = new(@"\b(strong|good|great|clear|confident|thoughtful|impressive|well|solid)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex NegativeSignalPattern = new(@"\b(concern|gap|weak|missing|lacking|unclear|unsure|risk)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex YesterdayPattern = new(@"\b(yesterday|since last|completed|finished|shipped|wrapped up)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex TodayPattern = new(@"\b(today|next|planning|focus|working on|going to)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ImpactPattern = new(@"\b(impact|affected|severity|outage|customer impact|downtime)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex FillerOnlyPattern = new(@"^(uh|um|hmm|mm|yeah|yep|nope|okay|ok|right|got it|sounds good|sure|thanks|thank you)[.!]*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex HeadingPattern = new(@"^##+\s+(?<heading>.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
+
+    public static IReadOnlyList<string> BuiltInTemplateNames => BuiltIns;
+
+    public static string NormalizeTemplateName(string? template)
+    {
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            return "Standard Meeting Notes";
+        }
+
+        var trimmed = template.Trim();
+        if (TemplateAliases.TryGetValue(trimmed, out var normalized))
+        {
+            return normalized;
+        }
+
+        return trimmed;
+    }
+
+    public static bool IsBuiltInTemplate(string? template)
+    {
+        var normalized = NormalizeTemplateName(template);
+        return BuiltIns.Contains(normalized, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static string CreateSummary(string transcript, string template = "Standard Meeting Notes")
+    {
+        return CreateSummary(transcript, "", template);
+    }
+
+    public static string CreateSummary(string transcript, string meetingTitle, string template)
     {
         if (string.IsNullOrWhiteSpace(transcript))
         {
             return "";
         }
 
-        var lines = transcript.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-        var turns = new List<(string Speaker, string Text)>();
+        var resolvedTemplate = ResolveTemplate(meetingTitle, transcript, template);
+        var turns = ParseTurns(transcript);
+        var model = BuildSummaryModel(turns);
+        var usedContent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Detect timestamped speaker lines: [HH:mm:ss] Speaker: text
-        var timestampPattern = new Regex(@"^\[\d{2}:\d{2}:\d{2}\]\s+(?<speaker>[^:]+):\s*(?<text>.+)$");
-        // Detect legacy blocks: [You] text or [System audio] text
-        var legacyPattern = new Regex(@"^\[(?<speaker>[^\]]+)\]\s*(?<text>.+)$");
+        var builder = new StringBuilder();
+        AppendParagraphSection(builder, "Summary", BuildSummaryParagraph(model));
+        RememberContent(usedContent, BuildSummaryParagraph(model));
 
-        foreach (var line in lines)
+        switch (resolvedTemplate)
         {
-            var trimmed = line.Trim();
-            if (string.IsNullOrWhiteSpace(trimmed))
-                continue;
+            case "1:1":
+                AppendBulletSection(builder, "Wins / Progress", TakeUnique(model.Updates, usedContent, 4));
+                AppendBulletSection(builder, "Concerns / Support Needed", TakeUnique(Merge(model.Risks, model.OpenQuestions), usedContent, 4));
+                AppendBulletSection(builder, "Decisions / Commitments", TakeUnique(Merge(model.Decisions, model.ActionItems), usedContent, 5), checklist: true);
+                AppendBulletSection(builder, "Action Items", TakeUnique(model.ActionItems, usedContent, 5), checklist: true);
+                AppendBulletSection(builder, "Follow-ups", TakeUnique(model.Risks, usedContent, 4));
+                break;
 
-            var match = timestampPattern.Match(trimmed);
-            if (!match.Success)
-            {
-                match = legacyPattern.Match(trimmed);
-            }
+            case "Customer Discovery":
+                AppendBulletSection(builder, "Customer Context", TakeUnique(model.CustomerContext, usedContent, 4));
+                AppendBulletSection(builder, "Pain Points", TakeUnique(model.PainPoints, usedContent, 5));
+                AppendBulletSection(builder, "Current Workflow", TakeUnique(model.CurrentWorkflow, usedContent, 4));
+                AppendBulletSection(builder, "Buying Signals", TakeUnique(model.BuyingSignals, usedContent, 4));
+                AppendBulletSection(builder, "Action Items", TakeUnique(model.ActionItems, usedContent, 5), checklist: true);
+                break;
 
-            if (match.Success)
-            {
-                var speaker = match.Groups["speaker"].Value.Trim();
-                var text = match.Groups["text"].Value.Trim();
-                if (text.Length > 0)
-                {
-                    turns.Add((speaker, text));
-                }
-            }
+            case "Stand-up":
+                AppendBulletSection(builder, "Yesterday", TakeUnique(model.Yesterday, usedContent, 4));
+                AppendBulletSection(builder, "Today", TakeUnique(model.Today, usedContent, 4));
+                AppendBulletSection(builder, "Blockers", TakeUnique(model.Risks, usedContent, 4));
+                AppendBulletSection(builder, "Coordination Notes", TakeUnique(model.Decisions, usedContent, 4));
+                AppendBulletSection(builder, "Action Items", TakeUnique(model.ActionItems, usedContent, 5), checklist: true);
+                break;
+
+            case "Weekly Team Meeting":
+                AppendBulletSection(builder, "Key Points", TakeUnique(model.KeyPoints, usedContent, 5));
+                AppendBulletSection(builder, "Decisions", TakeUnique(model.Decisions, usedContent, 4));
+                AppendBulletSection(builder, "Risks / Follow-ups", TakeUnique(Merge(model.Risks, model.OpenQuestions), usedContent, 5));
+                AppendBulletSection(builder, "Action Items", TakeUnique(model.ActionItems, usedContent, 5), checklist: true);
+                break;
+
+            case "Hiring Interview":
+                AppendBulletSection(builder, "Candidate Signals", TakeUnique(model.KeyPoints, usedContent, 5));
+                AppendBulletSection(builder, "Strengths", TakeUnique(model.Strengths, usedContent, 4));
+                AppendBulletSection(builder, "Concerns", TakeUnique(Merge(model.Concerns, model.OpenQuestions), usedContent, 4));
+                AppendBulletSection(builder, "Decision / Recommendation", TakeUnique(model.Decisions, usedContent, 3));
+                AppendBulletSection(builder, "Follow-ups", TakeUnique(model.ActionItems, usedContent, 4), checklist: true);
+                break;
+
+            case "Sales Call":
+                AppendBulletSection(builder, "Customer Needs", TakeUnique(Merge(model.CustomerContext, model.PainPoints), usedContent, 5));
+                AppendBulletSection(builder, "Objections / Risks", TakeUnique(Merge(model.Concerns, model.Risks), usedContent, 4));
+                AppendBulletSection(builder, "Commitments", TakeUnique(model.Decisions, usedContent, 5), checklist: true);
+                AppendBulletSection(builder, "Next Steps", TakeUnique(model.ActionItems, usedContent, 5), checklist: true);
+                break;
+
+            case "Product Review":
+                AppendBulletSection(builder, "Feedback", TakeUnique(Merge(model.KeyPoints, model.PainPoints), usedContent, 5));
+                AppendBulletSection(builder, "Decisions", TakeUnique(model.Decisions, usedContent, 4));
+                AppendBulletSection(builder, "Risks / Open Questions", TakeUnique(Merge(model.Risks, model.OpenQuestions), usedContent, 5));
+                AppendBulletSection(builder, "Action Items", TakeUnique(model.ActionItems, usedContent, 5), checklist: true);
+                break;
+
+            case "Incident Review":
+                AppendBulletSection(builder, "Timeline / Signals", TakeUnique(Merge(model.Updates, model.KeyPoints), usedContent, 5));
+                AppendBulletSection(builder, "Impact", TakeUnique(Merge(model.Impact, model.Risks), usedContent, 4));
+                AppendBulletSection(builder, "Decisions", TakeUnique(model.Decisions, usedContent, 4));
+                AppendBulletSection(builder, "Follow-ups", TakeUnique(Merge(model.ActionItems, model.OpenQuestions), usedContent, 5), checklist: true);
+                break;
+
+            default:
+                AppendBulletSection(builder, "Key Points", TakeUnique(model.KeyPoints, usedContent, 5));
+                AppendBulletSection(builder, "Decisions", TakeUnique(model.Decisions, usedContent, 4));
+                AppendBulletSection(builder, "Action Items", TakeUnique(model.ActionItems, usedContent, 5), checklist: true);
+                AppendBulletSection(builder, "Open Questions", TakeUnique(model.OpenQuestions, usedContent, 4));
+                AppendBulletSection(builder, "Risks / Follow-ups", TakeUnique(model.Risks, usedContent, 4));
+                break;
         }
 
-        string bulletText;
-        if (turns.Count > 0)
-        {
-            // Use at most the first 6 meaningful turns
-            var selectedTurns = turns.Take(6).ToList();
-            var bullets = selectedTurns.Select(t =>
-            {
-                var text = t.Text;
-                if (text.Length > 220)
-                {
-                    text = text[..217].TrimEnd() + "...";
-                }
-                return $"- {t.Speaker}: {text}";
-            });
-            bulletText = string.Join(Environment.NewLine, bullets);
-        }
-        else
-        {
-            // Fallback to sentence-based extraction for non-timestamped transcripts
-            var clean = Regex.Replace(transcript, @"\s+", " ").Trim();
-            var sentences = Regex.Split(clean, @"(?<=[.!?])\s+")
-                .Select(sentence => sentence.Trim())
-                .Where(sentence => sentence.Length > 0)
-                .ToList();
-
-            var summarySentences = sentences.Count <= 4
-                ? sentences
-                : sentences.Take(2).Concat(sentences.TakeLast(2)).ToList();
-
-            var bullets = summarySentences
-                .Select(sentence => sentence.Trim().TrimStart('-', '•').Trim())
-                .Where(sentence => sentence.Length > 0)
-                .Select(sentence => $"- {sentence}");
-
-            bulletText = string.Join(Environment.NewLine, bullets);
-        }
-        if (template.Equals("standup", StringComparison.OrdinalIgnoreCase))
-        {
-            return "## Meeting Summary" + Environment.NewLine + bulletText +
-                   Environment.NewLine + Environment.NewLine +
-                   "## Updates" + Environment.NewLine + bulletText +
-                   Environment.NewLine + Environment.NewLine +
-                   "## Blockers" + Environment.NewLine + "None noted." +
-                   Environment.NewLine + Environment.NewLine +
-                   "## Action Items" + Environment.NewLine + "None noted.";
-        }
-
-        if (template.Equals("customer", StringComparison.OrdinalIgnoreCase))
-        {
-            return "## Meeting Summary" + Environment.NewLine + bulletText +
-                   Environment.NewLine + Environment.NewLine +
-                   "## Pain Points" + Environment.NewLine + "None noted." +
-                   Environment.NewLine + Environment.NewLine +
-                   "## Quotes / Signals" + Environment.NewLine + "None noted." +
-                   Environment.NewLine + Environment.NewLine +
-                   "## Action Items" + Environment.NewLine + "None noted.";
-        }
-
-        return "## Meeting Summary" + Environment.NewLine + bulletText;
+        return builder.ToString().Trim();
     }
 
     public static async Task<string> CreateSummaryAsync(string transcript, string meetingTitle, MuesliSettings settings)
@@ -120,19 +194,47 @@ public static class MeetingSummaryService
         }
 
         var provider = settings.MeetingSummaryProvider.Trim().ToLowerInvariant();
+        var localTemplate = EffectiveLocalTemplate(settings, meetingTitle, transcript);
         try
         {
             return provider switch
             {
                 "openai" => await SummarizeWithOpenAIAsync(transcript, meetingTitle, settings),
                 "openrouter" => await SummarizeWithOpenRouterAsync(transcript, meetingTitle, settings),
-                _ => CreateSummary(transcript, EffectiveTemplate(settings))
+                _ => CreateLocalSummary(transcript, meetingTitle, settings)
             };
         }
         catch
         {
-            return CreateSummary(transcript, EffectiveTemplate(settings));
+            return CreateLocalSummary(transcript, meetingTitle, settings);
         }
+    }
+
+    private static string CreateLocalSummary(string transcript, string meetingTitle, MuesliSettings settings)
+    {
+        var promptOverride = settings.MeetingSummaryPromptOverride?.Trim() ?? "";
+        if (promptOverride.Length == 0)
+        {
+            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
+        }
+
+        return TryCreateCustomPromptSummary(transcript, meetingTitle, promptOverride, out var customSummary)
+            ? customSummary
+            : CreateSummary(transcript, meetingTitle, "Standard Meeting Notes");
+    }
+
+    private static string EffectiveLocalTemplate(MuesliSettings settings, string meetingTitle, string transcript)
+    {
+        var selected = NormalizeTemplateName(settings.MeetingSummaryTemplate);
+        return ResolveTemplate(meetingTitle, transcript, selected);
+    }
+
+    private static string EffectiveSystemPrompt(MuesliSettings settings)
+    {
+        var promptOverride = settings.MeetingSummaryPromptOverride?.Trim() ?? "";
+        return promptOverride.Length > 0
+            ? promptOverride
+            : SummaryInstructions(NormalizeTemplateName(settings.MeetingSummaryTemplate));
     }
 
     private static async Task<string> SummarizeWithOpenAIAsync(string transcript, string meetingTitle, MuesliSettings settings)
@@ -145,7 +247,7 @@ public static class MeetingSummaryService
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            return CreateSummary(transcript, EffectiveTemplate(settings));
+            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
         }
 
         var model = string.IsNullOrWhiteSpace(settings.OpenAIModel) ? "gpt-5.4-mini" : settings.OpenAIModel;
@@ -154,7 +256,7 @@ public static class MeetingSummaryService
             model,
             input = new object[]
             {
-                new { role = "system", content = SummaryInstructions(EffectiveTemplate(settings)) },
+                new { role = "system", content = EffectiveSystemPrompt(settings) },
                 new { role = "user", content = SummaryUserPrompt(transcript, meetingTitle) }
             },
             reasoning = new { effort = "low" },
@@ -169,13 +271,13 @@ public static class MeetingSummaryService
         using var response = await Http.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
-            return CreateSummary(transcript, EffectiveTemplate(settings));
+            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
         }
 
         var json = await response.Content.ReadAsStringAsync();
         using var document = JsonDocument.Parse(json);
         var text = ExtractOpenAIText(document.RootElement);
-        return string.IsNullOrWhiteSpace(text) ? CreateSummary(transcript, EffectiveTemplate(settings)) : text.Trim();
+        return string.IsNullOrWhiteSpace(text) ? CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript)) : text.Trim();
     }
 
     private static async Task<string> SummarizeWithOpenRouterAsync(string transcript, string meetingTitle, MuesliSettings settings)
@@ -188,7 +290,7 @@ public static class MeetingSummaryService
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            return CreateSummary(transcript, EffectiveTemplate(settings));
+            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
         }
 
         var model = string.IsNullOrWhiteSpace(settings.OpenRouterModel)
@@ -199,7 +301,7 @@ public static class MeetingSummaryService
             model,
             messages = new object[]
             {
-                new { role = "system", content = SummaryInstructions(EffectiveTemplate(settings)) },
+                new { role = "system", content = EffectiveSystemPrompt(settings) },
                 new { role = "user", content = SummaryUserPrompt(transcript, meetingTitle) }
             },
             max_tokens = 2500
@@ -213,203 +315,688 @@ public static class MeetingSummaryService
         using var response = await Http.SendAsync(request);
         if (!response.IsSuccessStatusCode)
         {
-            return CreateSummary(transcript, EffectiveTemplate(settings));
+            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
         }
 
         var json = await response.Content.ReadAsStringAsync();
         using var document = JsonDocument.Parse(json);
         var text = ExtractOpenRouterText(document.RootElement);
-        return string.IsNullOrWhiteSpace(text) ? CreateSummary(transcript, EffectiveTemplate(settings)) : text.Trim();
+        return string.IsNullOrWhiteSpace(text) ? CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript)) : text.Trim();
     }
 
     private static StringContent JsonContent<T>(T value)
     {
-        return new StringContent(
-            JsonSerializer.Serialize(value),
-            Encoding.UTF8,
-            "application/json");
+        return new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
     }
 
-    private static string SummaryInstructions(string template = "standard")
+    private static string SummaryInstructions(string template)
     {
         if (!string.IsNullOrWhiteSpace(template) && template.Contains('\n'))
         {
             return template;
         }
 
-        if (template.Equals("standup", StringComparison.OrdinalIgnoreCase))
+        var resolved = NormalizeTemplateName(template);
+        if (resolved.Equals("Auto", StringComparison.OrdinalIgnoreCase))
         {
             return """
-            You are a meeting notes assistant. Produce concise markdown notes for a standup.
-            Do not invent facts.
+            You are a meeting notes assistant. Infer the best note structure from the transcript and produce polished markdown notes.
+            Do not invent facts. Keep the notes structured, concise, and useful after the meeting.
 
-            ## Meeting Summary
-            Summarize progress and blockers.
+            Always include:
+            - ## Summary
+            - one or more meeting-specific sections
+            - ## Action Items
 
-            ## Updates
-            - List concrete status updates.
-
-            ## Blockers
-            - List blockers. If none, write "None noted."
-
-            ## Action Items
-            - List action items with owners only if stated. If none, write "None noted."
+            Prefer short bullet points. Include owners only when they are clearly stated.
             """;
         }
 
-        if (template.Equals("customer", StringComparison.OrdinalIgnoreCase))
+        return resolved switch
         {
-            return """
-            You are a meeting notes assistant. Produce concise markdown notes for a customer discovery call.
-            Do not invent facts.
+            "Standard Meeting Notes" => """
+                You are a meeting notes assistant. Produce concise, polished markdown notes.
+                Do not invent facts. Prefer clean bullets over transcript excerpts.
 
-            ## Meeting Summary
-            Summarize the customer context and outcome.
+                Use this structure exactly:
 
-            ## Pain Points
-            - List pain points and needs.
+                ## Summary
+                One short paragraph covering the purpose and outcome.
 
-            ## Quotes / Signals
-            - Capture notable signals only if actually present.
+                ## Key Points
+                - Most important discussion points
 
-            ## Action Items
-            - List follow-ups with owners only if stated. If none, write "None noted."
-            """;
-        }
+                ## Decisions
+                - Confirmed choices or conclusions
 
-        if (template.Equals("1 to 1", StringComparison.OrdinalIgnoreCase))
-        {
-            return """
-            Use this structure exactly:
+                ## Action Items
+                - [ ] Follow-ups, owners, and timing only if stated
 
-            ## Check-In
-            A brief summary of how the conversation opened and the overall tone.
+                ## Open Questions
+                - Open issues still unresolved
 
-            ## Topics Discussed
-            - Main themes raised by either person
+                ## Risks / Follow-ups
+                - Risks, blockers, or coordination items
+                """,
+            "1:1" => """
+                Produce polished markdown notes for a 1:1.
+                Do not invent facts.
 
-            ## Support Needed
-            - Blockers, concerns, or asks for help
+                Use this structure exactly:
 
-            ## Commitments
-            - [ ] Follow-ups or commitments made by either person
+                ## Summary
+                Briefly summarize the tone, focus, and outcome.
 
-            ## Manager Notes
-            - Coaching, feedback, or context that should be remembered
-            """;
-        }
+                ## Wins / Progress
+                - Positive updates or momentum
 
-        if (template.Equals("customer discovery", StringComparison.OrdinalIgnoreCase))
-        {
-            return """
-            Use this structure exactly:
+                ## Concerns / Support Needed
+                - Challenges, blockers, coaching needs, or asks
 
-            ## Customer Context
-            - Company, role, or situation if mentioned
+                ## Decisions / Commitments
+                - Agreements or commitments made
 
-            ## Problems and Pain Points
-            - Explicit frustrations, blockers, or unmet needs
+                ## Action Items
+                - [ ] Follow-ups with owners only if stated
 
-            ## Current Workflow
-            - How they currently solve the problem today
+                ## Follow-ups
+                - Anything that should be revisited later
+                """,
+            "Customer Discovery" => """
+                Produce polished markdown notes for a customer discovery meeting.
+                Do not invent facts.
 
-            ## Buying Signals
-            - Indicators of urgency, budget, timing, or decision process
+                Use this structure exactly:
 
-            ## Next Steps
-            - [ ] Follow-up actions, owners, and dates if mentioned
-            """;
-        }
+                ## Summary
+                One short paragraph about the customer context and main outcome.
 
-        if (template.Equals("hiring", StringComparison.OrdinalIgnoreCase))
-        {
-            return """
-            Use this structure exactly:
+                ## Customer Context
+                - Relevant company, role, or situation details
 
-            ## Candidate Snapshot
-            A concise overview of the candidate and relevant background.
+                ## Pain Points
+                - Explicit pains, frustrations, or unmet needs
 
-            ## Strengths
-            - Positive signals from the conversation
+                ## Current Workflow
+                - How the customer handles this today
 
-            ## Concerns
-            - Risks, gaps, or open questions
+                ## Buying Signals
+                - Timing, urgency, budget, decision process, or next-step signals
 
-            ## Role Fit
-            - Why they do or do not fit the role as discussed
+                ## Action Items
+                - [ ] Follow-ups with owners only if stated
+                """,
+            "Stand-up" => """
+                Produce polished markdown notes for a stand-up.
+                Do not invent facts.
 
-            ## Decision and Next Steps
-            - [ ] Hiring decision, interview progression, or follow-up items
-            """;
-        }
+                Use this structure exactly:
 
-        if (template.Equals("stand-up", StringComparison.OrdinalIgnoreCase))
-        {
-            return """
-            Use this structure exactly:
+                ## Summary
+                A short paragraph about the overall progress and risks.
 
-            ## Yesterday
-            - Work completed or progress since the last update
+                ## Yesterday
+                - Completed work or recent progress
 
-            ## Today
-            - Planned work or priorities for today
+                ## Today
+                - Planned work or priorities
 
-            ## Blockers
-            - Risks, delays, or dependencies
+                ## Blockers
+                - Risks, blockers, or dependencies
 
-            ## Coordination Notes
-            - Decisions, asks, or cross-team alignment points
-            """;
-        }
+                ## Coordination Notes
+                - Cross-team asks or important alignment points
 
-        if (template.Equals("weekly team meeting", StringComparison.OrdinalIgnoreCase))
-        {
-            return """
-            Use this structure exactly:
+                ## Action Items
+                - [ ] Follow-ups with owners only if stated
+                """,
+            "Weekly Team Meeting" => """
+                Produce polished markdown notes for a weekly team meeting.
+                Do not invent facts.
 
-            ## Weekly Overview
-            A concise summary of the most important updates from the meeting.
+                Use this structure exactly:
 
-            ## Progress Updates
-            - Key workstreams and status changes
+                ## Summary
+                A concise paragraph on the most important weekly outcomes.
 
-            ## Decisions
-            - Decisions made or confirmed
+                ## Key Points
+                - Important updates across workstreams
 
-            ## Risks and Open Questions
-            - Issues that need attention or follow-up
+                ## Decisions
+                - Decisions made or confirmed
 
-            ## Action Items
-            - [ ] Tasks, owners, and timing if mentioned
-            """;
-        }
+                ## Risks / Follow-ups
+                - Issues, blockers, or unresolved items
 
-        return """
-        You are a meeting notes assistant. Given a raw meeting transcript, produce concise, professional markdown notes.
-        Do not invent facts. Prefer concrete takeaways over filler. Capture owners only when they are actually mentioned.
-        If a requested section has no content, write "None noted."
+                ## Action Items
+                - [ ] Tasks with owners only if stated
+                """,
+            "Hiring Interview" => """
+                Produce polished markdown notes for a hiring interview.
+                Do not invent facts.
 
-        Follow this note template:
+                Use this structure exactly:
 
-        ## Meeting Summary
-        Briefly summarize the purpose and outcome of the meeting.
+                ## Summary
+                Briefly summarize the candidate and how the conversation went.
 
-        ## Key Points
-        - Capture the most important discussion points.
+                ## Candidate Signals
+                - Notable examples, experience, or evidence
 
-        ## Decisions
-        - List decisions. If none, write "None noted."
+                ## Strengths
+                - Strong positive signals
 
-        ## Action Items
-        - List action items with owners only if stated. If none, write "None noted."
-        """;
+                ## Concerns
+                - Gaps, risks, or unclear areas
+
+                ## Decision / Recommendation
+                - Hiring recommendation or next interview decision
+
+                ## Follow-ups
+                - [ ] Remaining interview steps or checks
+                """,
+            "Sales Call" => """
+                Produce polished markdown notes for a sales call.
+                Do not invent facts.
+
+                Use this structure exactly:
+
+                ## Summary
+                A concise paragraph on customer need, fit, and momentum.
+
+                ## Customer Needs
+                - What the buyer needs or wants to solve
+
+                ## Objections / Risks
+                - Concerns, objections, or blockers
+
+                ## Commitments
+                - Promises or agreed follow-ups
+
+                ## Next Steps
+                - [ ] Specific next steps with owners only if stated
+                """,
+            "Product Review" => """
+                Produce polished markdown notes for a product review.
+                Do not invent facts.
+
+                Use this structure exactly:
+
+                ## Summary
+                A short paragraph covering the product area reviewed and the outcome.
+
+                ## Feedback
+                - Main feedback themes
+
+                ## Decisions
+                - Decisions, prioritization, or scope calls
+
+                ## Risks / Open Questions
+                - What still needs attention
+
+                ## Action Items
+                - [ ] Follow-ups with owners only if stated
+                """,
+            "Incident Review" => """
+                Produce polished markdown notes for an incident review.
+                Do not invent facts.
+
+                Use this structure exactly:
+
+                ## Summary
+                A short paragraph covering what happened and the current state.
+
+                ## Timeline / Signals
+                - Key incident milestones or observed signals
+
+                ## Impact
+                - Customer, product, or operational impact
+
+                ## Decisions
+                - Confirmed remediation or policy decisions
+
+                ## Follow-ups
+                - [ ] Follow-up actions and owners only if stated
+                """,
+            _ => SummaryInstructions("Standard Meeting Notes")
+        };
     }
 
-    private static string EffectiveTemplate(MuesliSettings settings)
+    private static string ResolveTemplate(string meetingTitle, string transcript, string template)
     {
-        return string.IsNullOrWhiteSpace(settings.MeetingSummaryPromptOverride)
-            ? settings.MeetingSummaryTemplate
-            : settings.MeetingSummaryPromptOverride;
+        var normalized = NormalizeTemplateName(template);
+        if (!normalized.Equals("Auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        var combined = $"{meetingTitle} {transcript}";
+        if (Regex.IsMatch(combined, @"\b(1:1|1 to 1|one on one)\b", RegexOptions.IgnoreCase))
+            return "1:1";
+        if (Regex.IsMatch(combined, @"\b(standup|stand-up|daily sync)\b", RegexOptions.IgnoreCase))
+            return "Stand-up";
+        if (Regex.IsMatch(combined, @"\b(customer discovery|discovery|prospect|customer call)\b", RegexOptions.IgnoreCase))
+            return "Customer Discovery";
+        if (Regex.IsMatch(combined, @"\b(hiring|candidate|interview loop)\b", RegexOptions.IgnoreCase))
+            return "Hiring Interview";
+        if (Regex.IsMatch(combined, @"\b(sales|deal|pipeline|close)\b", RegexOptions.IgnoreCase))
+            return "Sales Call";
+        if (Regex.IsMatch(combined, @"\b(product review|design review|roadmap review)\b", RegexOptions.IgnoreCase))
+            return "Product Review";
+        if (Regex.IsMatch(combined, @"\b(incident|postmortem|outage|sev)\b", RegexOptions.IgnoreCase))
+            return "Incident Review";
+        if (Regex.IsMatch(combined, @"\b(weekly|staff meeting|team meeting)\b", RegexOptions.IgnoreCase))
+            return "Weekly Team Meeting";
+        return "Standard Meeting Notes";
+    }
+
+    private static bool TryCreateCustomPromptSummary(string transcript, string meetingTitle, string customPrompt, out string summary)
+    {
+        var headings = HeadingPattern.Matches(customPrompt)
+            .Select(match => match.Groups["heading"].Value.Trim())
+            .Where(heading => heading.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (headings.Count == 0)
+        {
+            summary = "";
+            return false;
+        }
+
+        var turns = ParseTurns(transcript);
+        var model = BuildSummaryModel(turns);
+        var usedContent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var builder = new StringBuilder();
+
+        foreach (var heading in headings)
+        {
+            AppendCustomSection(builder, heading, model, usedContent);
+        }
+
+        summary = builder.ToString().Trim();
+        return summary.Length > 0;
+    }
+
+    private static SummaryModel BuildSummaryModel(List<MeetingTurn> turns)
+    {
+        if (turns.Count == 0)
+        {
+            return new SummaryModel([], [], [], [], [], [], [], [], [], [], [], [], [], [], []);
+        }
+
+        var keyPoints = CollectDistinct(turns,
+            turn => !FillerOnlyPattern.IsMatch(turn.Text) &&
+                    !ActionPattern.IsMatch(turn.Text) &&
+                    !DecisionPattern.IsMatch(turn.Text) &&
+                    !QuestionPattern.IsMatch(turn.Text),
+            7,
+            includeSpeaker: false);
+        var decisions = CollectDistinct(turns, turn => DecisionPattern.IsMatch(turn.Text), 5, includeSpeaker: true);
+        var actionItems = CollectDistinct(turns, turn => ActionPattern.IsMatch(turn.Text), 6, includeSpeaker: true, checklistTone: true);
+        var openQuestions = CollectDistinct(turns, turn => QuestionPattern.IsMatch(turn.Text), 5, includeSpeaker: true);
+        var risks = CollectDistinct(turns, turn => RiskPattern.IsMatch(turn.Text), 5, includeSpeaker: true);
+        var customerContext = CollectDistinct(turns, turn => Regex.IsMatch(turn.Text, @"\b(company|team|role|customer|users?|market|segment)\b", RegexOptions.IgnoreCase), 4, includeSpeaker: true);
+        var painPoints = CollectDistinct(turns, turn => PainPattern.IsMatch(turn.Text), 5, includeSpeaker: true);
+        var currentWorkflow = CollectDistinct(turns, turn => WorkflowPattern.IsMatch(turn.Text), 4, includeSpeaker: true);
+        var buyingSignals = CollectDistinct(turns, turn => BuyingSignalPattern.IsMatch(turn.Text), 4, includeSpeaker: true);
+        var strengths = CollectDistinct(turns, turn => PositiveSignalPattern.IsMatch(turn.Text), 4, includeSpeaker: true);
+        var concerns = CollectDistinct(turns, turn => NegativeSignalPattern.IsMatch(turn.Text), 4, includeSpeaker: true);
+        var yesterday = CollectDistinct(turns, turn => YesterdayPattern.IsMatch(turn.Text), 4, includeSpeaker: true);
+        var today = CollectDistinct(turns, turn => TodayPattern.IsMatch(turn.Text), 4, includeSpeaker: true);
+        var updates = CollectDistinct(turns,
+            turn => !FillerOnlyPattern.IsMatch(turn.Text) &&
+                    !ActionPattern.IsMatch(turn.Text),
+            5,
+            includeSpeaker: true);
+        var impact = CollectDistinct(turns, turn => ImpactPattern.IsMatch(turn.Text), 4, includeSpeaker: true);
+
+        return new SummaryModel(
+            keyPoints,
+            decisions,
+            actionItems,
+            openQuestions,
+            risks,
+            customerContext,
+            painPoints,
+            currentWorkflow,
+            buyingSignals,
+            strengths,
+            concerns,
+            yesterday,
+            today,
+            updates,
+            impact);
+    }
+
+    private static string BuildSummaryParagraph(SummaryModel model)
+    {
+        var parts = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in new[] { model.KeyPoints, model.Risks, model.Decisions, model.ActionItems })
+        {
+            foreach (var raw in source)
+            {
+                var part = EnsureSentence(RemoveMarkdownSpeakerPrefix(raw));
+                var key = CanonicalizeText(part);
+                if (key.Length == 0 || !seen.Add(key))
+                {
+                    continue;
+                }
+
+                parts.Add(part);
+                if (parts.Count == 3)
+                {
+                    break;
+                }
+            }
+
+            if (parts.Count == 3)
+            {
+                break;
+            }
+        }
+
+        if (parts.Count == 0)
+        {
+            return "No concise summary could be generated from the transcript.";
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static void AppendCustomSection(StringBuilder builder, string heading, SummaryModel model, HashSet<string> usedContent)
+    {
+        var normalized = heading.Trim().ToLowerInvariant();
+        if (normalized.Contains("summary") || normalized.Contains("overview"))
+        {
+            var paragraph = BuildSummaryParagraph(model);
+            AppendParagraphSection(builder, heading, paragraph);
+            RememberContent(usedContent, paragraph);
+            return;
+        }
+
+        var (items, checklist) = normalized switch
+        {
+            var value when value.Contains("customer context") => (TakeUnique(model.CustomerContext, usedContent, 4), false),
+            var value when value.Contains("pain") || value.Contains("need") => (TakeUnique(Merge(model.PainPoints, model.KeyPoints), usedContent, 5), false),
+            var value when value.Contains("workflow") || value.Contains("process") => (TakeUnique(model.CurrentWorkflow, usedContent, 4), false),
+            var value when value.Contains("buy") || value.Contains("signal") => (TakeUnique(model.BuyingSignals, usedContent, 4), false),
+            var value when value.Contains("strength") => (TakeUnique(model.Strengths, usedContent, 4), false),
+            var value when value.Contains("concern") || value.Contains("objection") => (TakeUnique(Merge(model.Concerns, model.Risks), usedContent, 4), false),
+            var value when value.Contains("risk") || value.Contains("follow-up") || value.Contains("follow up") => (TakeUnique(Merge(model.Risks, model.OpenQuestions), usedContent, 5), false),
+            var value when value.Contains("decision") || value.Contains("commitment") || value.Contains("recommendation") => (TakeUnique(Merge(model.Decisions, model.ActionItems), usedContent, 5), normalized.Contains("commitment")),
+            var value when value.Contains("action") || value.Contains("next step") || value.Contains("follow-up") => (TakeUnique(model.ActionItems, usedContent, 5), true),
+            var value when value.Contains("question") => (TakeUnique(model.OpenQuestions, usedContent, 4), false),
+            var value when value.Contains("yesterday") => (TakeUnique(model.Yesterday, usedContent, 4), false),
+            var value when value.Contains("today") => (TakeUnique(model.Today, usedContent, 4), false),
+            var value when value.Contains("blocker") => (TakeUnique(model.Risks, usedContent, 4), false),
+            var value when value.Contains("impact") => (TakeUnique(Merge(model.Impact, model.Risks), usedContent, 4), false),
+            var value when value.Contains("timeline") || value.Contains("signal") => (TakeUnique(Merge(model.Updates, model.KeyPoints), usedContent, 5), false),
+            _ => (TakeUnique(model.KeyPoints, usedContent, 5), false)
+        };
+
+        AppendBulletSection(builder, heading, items, checklist);
+    }
+
+    private static List<MeetingTurn> ParseTurns(string transcript)
+    {
+        var turns = new List<MeetingTurn>();
+        var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawLine in transcript.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                continue;
+            }
+
+            if (TryParseTurn(trimmed, out var parsed))
+            {
+                if (dedupe.Add($"{parsed.Speaker}|{parsed.CanonicalText}"))
+                {
+                    turns.Add(parsed);
+                }
+
+                continue;
+            }
+
+            foreach (var sentence in SplitIntoSentences(trimmed))
+            {
+                var canonical = CanonicalizeText(sentence);
+                if (canonical.Length == 0 || FillerOnlyPattern.IsMatch(canonical))
+                {
+                    continue;
+                }
+
+                if (dedupe.Add($"|{canonical}"))
+                {
+                    turns.Add(new MeetingTurn("", sentence.Trim(), canonical));
+                }
+            }
+        }
+
+        return turns;
+    }
+
+    private static bool TryParseTurn(string line, out MeetingTurn turn)
+    {
+        var match = TimestampPattern.Match(line);
+        if (!match.Success)
+        {
+            match = LegacyPattern.Match(line);
+        }
+
+        if (!match.Success)
+        {
+            turn = new MeetingTurn("", "", "");
+            return false;
+        }
+
+        var speaker = match.Groups["speaker"].Value.Trim();
+        var text = match.Groups["text"].Value.Trim();
+        var canonical = CanonicalizeText(text);
+        if (canonical.Length == 0 || FillerOnlyPattern.IsMatch(canonical))
+        {
+            turn = new MeetingTurn("", "", "");
+            return false;
+        }
+
+        turn = new MeetingTurn(speaker, text, canonical);
+        return true;
+    }
+
+    private static IEnumerable<string> SplitIntoSentences(string text)
+    {
+        return Regex.Split(WhitespacePattern.Replace(text, " "), @"(?<=[.!?])\s+")
+            .Select(part => part.Trim())
+            .Where(part => part.Length > 0);
+    }
+
+    private static List<string> CollectDistinct(
+        IEnumerable<MeetingTurn> turns,
+        Func<MeetingTurn, bool> predicate,
+        int maxItems,
+        bool includeSpeaker,
+        bool checklistTone = false)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var items = new List<string>();
+
+        foreach (var turn in turns)
+        {
+            if (!predicate(turn))
+            {
+                continue;
+            }
+
+            var rendered = FormatTurn(turn, includeSpeaker, checklistTone);
+            var key = CanonicalizeText(RemoveMarkdownSpeakerPrefix(rendered));
+            if (key.Length == 0 || !seen.Add(key))
+            {
+                continue;
+            }
+
+            items.Add(rendered);
+            if (items.Count >= maxItems)
+            {
+                break;
+            }
+        }
+
+        return items;
+    }
+
+    private static string FormatTurn(MeetingTurn turn, bool includeSpeaker, bool checklistTone)
+    {
+        var text = ShortenForNote(turn.Text, checklistTone ? 170 : 190);
+        if (includeSpeaker && !string.IsNullOrWhiteSpace(turn.Speaker) && !turn.Speaker.Equals("System audio", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"**{turn.Speaker}:** {text}";
+        }
+
+        return text;
+    }
+
+    private static string ShortenForNote(string text, int maxLength)
+    {
+        var cleaned = WhitespacePattern.Replace(text, " ").Trim().Trim('-', '•', ':', ';');
+        cleaned = Regex.Replace(cleaned, @"^(we need to|need to|can you|please)\s+", "", RegexOptions.IgnoreCase);
+        cleaned = Regex.Replace(cleaned, @"^(i will|i'll)\s+", "", RegexOptions.IgnoreCase);
+        cleaned = UppercaseFirstLetter(cleaned);
+        if (cleaned.Length <= maxLength)
+        {
+            return EnsureSentence(cleaned);
+        }
+
+        var shortened = cleaned[..maxLength].TrimEnd();
+        var lastSpace = shortened.LastIndexOf(' ');
+        if (lastSpace > maxLength / 2)
+        {
+            shortened = shortened[..lastSpace];
+        }
+
+        return EnsureSentence(shortened + "...");
+    }
+
+    private static string UppercaseFirstLetter(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        return char.ToUpperInvariant(text[0]) + text[1..];
+    }
+
+    private static string CanonicalizeText(string text)
+    {
+        var cleaned = WhitespacePattern.Replace(text, " ").Trim().Trim('-', '•');
+        cleaned = Regex.Replace(cleaned, @"[^\w\s]", "");
+        return cleaned.Trim();
+    }
+
+    private static string RemoveMarkdownSpeakerPrefix(string text)
+    {
+        return Regex.Replace(text, @"^\*\*[^*]+:\*\*\s*", "").Trim();
+    }
+
+    private static string EnsureSentence(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return "";
+        }
+
+        var trimmed = text.Trim();
+        if (trimmed.EndsWith(".") || trimmed.EndsWith("!") || trimmed.EndsWith("?"))
+        {
+            return trimmed;
+        }
+
+        return trimmed + ".";
+    }
+
+    private static List<string> Merge(IEnumerable<string> primary, IEnumerable<string> secondary)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var merged = new List<string>();
+
+        foreach (var item in primary.Concat(secondary))
+        {
+            var key = CanonicalizeText(RemoveMarkdownSpeakerPrefix(item));
+            if (key.Length == 0 || !seen.Add(key))
+            {
+                continue;
+            }
+
+            merged.Add(item);
+        }
+
+        return merged;
+    }
+
+    private static List<string> TakeUnique(IEnumerable<string> items, HashSet<string> usedContent, int maxItems)
+    {
+        var selected = new List<string>();
+        foreach (var item in items)
+        {
+            var key = CanonicalizeText(RemoveMarkdownSpeakerPrefix(item));
+            if (key.Length == 0 || usedContent.Contains(key))
+            {
+                continue;
+            }
+
+            selected.Add(item);
+            usedContent.Add(key);
+            if (selected.Count >= maxItems)
+            {
+                break;
+            }
+        }
+
+        return selected;
+    }
+
+    private static void RememberContent(HashSet<string> usedContent, string text)
+    {
+        var key = CanonicalizeText(RemoveMarkdownSpeakerPrefix(text));
+        if (key.Length > 0)
+        {
+            usedContent.Add(key);
+        }
+    }
+
+    private static void AppendParagraphSection(StringBuilder builder, string heading, string paragraph)
+    {
+        if (builder.Length > 0)
+        {
+            builder.AppendLine();
+        }
+
+        builder.AppendLine($"## {heading}");
+        builder.AppendLine(string.IsNullOrWhiteSpace(paragraph) ? "None noted." : paragraph.Trim());
+    }
+
+    private static void AppendBulletSection(StringBuilder builder, string heading, List<string> items, bool checklist = false)
+    {
+        if (builder.Length > 0)
+        {
+            builder.AppendLine();
+        }
+
+        builder.AppendLine($"## {heading}");
+        if (items.Count == 0)
+        {
+            builder.AppendLine("None noted.");
+            return;
+        }
+
+        foreach (var item in items)
+        {
+            builder.AppendLine(checklist ? $"- [ ] {item}" : $"- {item}");
+        }
     }
 
     private static string SummaryUserPrompt(string transcript, string meetingTitle)
@@ -485,4 +1072,23 @@ public static class MeetingSummaryService
 
         return string.Join(Environment.NewLine, parts.Where(part => !string.IsNullOrWhiteSpace(part)));
     }
+
+    private sealed record MeetingTurn(string Speaker, string Text, string CanonicalText);
+
+    private sealed record SummaryModel(
+        List<string> KeyPoints,
+        List<string> Decisions,
+        List<string> ActionItems,
+        List<string> OpenQuestions,
+        List<string> Risks,
+        List<string> CustomerContext,
+        List<string> PainPoints,
+        List<string> CurrentWorkflow,
+        List<string> BuyingSignals,
+        List<string> Strengths,
+        List<string> Concerns,
+        List<string> Yesterday,
+        List<string> Today,
+        List<string> Updates,
+        List<string> Impact);
 }

@@ -88,6 +88,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private UIElement? _lastNonSearchPage;
     private System.Windows.Controls.Button? _lastNonSearchNav;
     private string? _selectedMeetingFolderId;
+    private string _selectedMeetingTemplate = "Standard Meeting Notes";
     private MeetingItem? _selectedMeeting;
     private Dictionary<string, string> _activeSpeakerAliases = new();
     private bool _lastMeetingDetailShowTranscript = false;
@@ -108,6 +109,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _diarizationDependencyStatus = "Not checked yet.";
     private string _diarizationTokenStatus = "Not checked yet.";
     private string _meetingDetectionStatus = "Meeting detection has not scanned yet.";
+    private string _runtimeSetupStatus = "";
+    private bool _canInstallLocalRuntime;
+    private bool _isInstallingLocalRuntime;
     private double? _indicatorLeft;
     private double? _indicatorTop;
 
@@ -140,7 +144,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<string> IndicatorPositions { get; } = ["Top Left", "Top Center", "Top Right", "Bottom Left", "Bottom Center", "Bottom Right", "Custom"];
     public ObservableCollection<string> ThemeOptions { get; } = ["Light", "Dark"];
     public ObservableCollection<string> SummaryProviders { get; } = ["local", "openai", "openrouter"];
-    public ObservableCollection<string> SummaryTemplates { get; } = ["auto", "1 to 1", "customer discovery", "hiring", "stand-up", "weekly team meeting", "standard", "standup", "customer"];
+    public ObservableCollection<string> SummaryTemplates { get; } = new(MeetingSummaryService.BuiltInTemplateNames);
     public ICollectionView FilteredDictations { get; }
     public ICollectionView FilteredMeetings { get; }
     public ICollectionView SearchDictationResults { get; }
@@ -239,8 +243,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string SelectedMeetingTitle => _selectedMeeting?.Title ?? "";
     public string SelectedMeetingMetadata => _selectedMeeting?.Metadata ?? "";
     public string SelectedMeetingNotes => string.IsNullOrWhiteSpace(_selectedMeeting?.Summary)
-        ? "No generated notes yet. The raw transcript is available below."
+        ? ""
         : ApplySpeakerAliasesToNotes(_selectedMeeting.Summary, _activeSpeakerAliases);
+    public string SelectedMeetingTemplate
+    {
+        get => _selectedMeetingTemplate;
+        set
+        {
+            var normalized = NormalizeSummaryTemplateName(value);
+            if (SetField(ref _selectedMeetingTemplate, normalized))
+            {
+                OnPropertyChanged(nameof(SelectedMeetingNotesActionLabel));
+            }
+        }
+    }
+    public string SelectedMeetingNotesActionLabel => string.IsNullOrWhiteSpace(_selectedMeeting?.Summary) ? "Generate Notes" : "Regenerate Notes";
     public string SelectedMeetingTranscript => ApplySpeakerAliases(_selectedMeeting?.Transcript ?? "", _activeSpeakerAliases);
     public string RuntimeDiagnostics
     {
@@ -286,6 +303,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         get => _modelCacheDirectory;
         private set => SetField(ref _modelCacheDirectory, value);
+    }
+    public string RuntimeSetupStatus
+    {
+        get => _runtimeSetupStatus;
+        private set => SetField(ref _runtimeSetupStatus, value);
+    }
+    public bool CanInstallLocalRuntime
+    {
+        get => _canInstallLocalRuntime;
+        private set => SetField(ref _canInstallLocalRuntime, value);
     }
     public string ModelCacheSize
     {
@@ -497,7 +524,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         get => _selectedSummaryTemplate;
         set
         {
-            if (SetField(ref _selectedSummaryTemplate, SummaryTemplates.Contains(value) ? value : "standard"))
+            var normalized = NormalizeSummaryTemplateName(value);
+            if (SetField(ref _selectedSummaryTemplate, normalized))
             {
                 SaveSettings();
             }
@@ -672,7 +700,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _userName = string.IsNullOrWhiteSpace(settings.UserName) ? Environment.UserName.Trim() : settings.UserName.Trim();
         _onboardingCompleted = settings.OnboardingCompleted;
         _selectedSummaryProvider = SummaryProviders.Contains(settings.MeetingSummaryProvider) ? settings.MeetingSummaryProvider : "local";
-        _selectedSummaryTemplate = SummaryTemplates.Contains(settings.MeetingSummaryTemplate) ? settings.MeetingSummaryTemplate : "standard";
+        _selectedSummaryTemplate = NormalizeSummaryTemplateName(settings.MeetingSummaryTemplate);
         _openAIApiKey = settings.OpenAIApiKey;
         _openAIModel = string.IsNullOrWhiteSpace(settings.OpenAIModel) ? "gpt-5.4-mini" : settings.OpenAIModel;
         _openRouterApiKey = settings.OpenRouterApiKey;
@@ -918,17 +946,50 @@ private void ShowOnboardingIfNeeded()
     };
     var readinessActions = new StackPanel { Orientation = WpfOrientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
     var checkSetup = new WpfButton { Content = "Check setup", Style = (Style)FindResource("SecondaryButton") };
+    var installRuntime = new WpfButton { Content = "Install local transcription runtime", Style = (Style)FindResource("PrimaryButton"), Margin = new Thickness(10, 0, 0, 0) };
     var downloadBase = new WpfButton { Content = "Download base model", Style = (Style)FindResource("PrimaryButton"), Margin = new Thickness(10, 0, 0, 0) };
     readinessActions.Children.Add(checkSetup);
+    readinessActions.Children.Add(installRuntime);
     readinessActions.Children.Add(downloadBase);
+    var setupStatusText = new TextBlock
+    {
+        Text = RuntimeSetupStatus,
+        Margin = new Thickness(0, 10, 0, 0),
+        FontSize = 12,
+        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
+        TextWrapping = TextWrapping.Wrap
+    };
     var readinessPanel = new StackPanel();
     readinessPanel.Children.Add(readinessText);
     readinessPanel.Children.Add(readinessActions);
+    readinessPanel.Children.Add(setupStatusText);
     body.Children.Add(BuildOnboardingRow("Local model readiness", "Whisper base is the recommended CPU fallback for broad laptop support.", readinessPanel));
+    void RefreshRuntimeSetupUi()
+    {
+        setupStatusText.Text = RuntimeSetupStatus;
+        installRuntime.IsEnabled = CanInstallLocalRuntime && !_isInstallingLocalRuntime;
+        checkSetup.IsEnabled = !_isInstallingLocalRuntime;
+        downloadBase.IsEnabled = !_isInstallingLocalRuntime;
+    }
     checkSetup.Click += async (_, _) =>
     {
         await RefreshRuntimeDiagnosticsAsync();
         readinessText.Text = SetupReadiness;
+        RefreshRuntimeSetupUi();
+    };
+    installRuntime.Click += async (_, _) =>
+    {
+        await InstallLocalRuntimeAsync(
+            onStatus: status =>
+            {
+                RuntimeSetupStatus = status;
+                setupStatusText.Text = status;
+            },
+            onAfterRefresh: () =>
+            {
+                readinessText.Text = SetupReadiness;
+                RefreshRuntimeSetupUi();
+            });
     };
     downloadBase.Click += async (_, _) =>
     {
@@ -951,6 +1012,7 @@ private void ShowOnboardingIfNeeded()
             downloadBase.IsEnabled = true;
         }
     };
+    RefreshRuntimeSetupUi();
     finish.Click += (_, _) =>
     {
         UserName = string.IsNullOrWhiteSpace(nameInput.Text) ? UserName : nameInput.Text.Trim();
@@ -1458,6 +1520,7 @@ private void CopyMeetingToClipboard(MeetingItem item)
 private void OpenMeetingDetail(MeetingItem item)
 {
     _selectedMeeting = item;
+    _selectedMeetingTemplate = NormalizeSummaryTemplateName(string.IsNullOrWhiteSpace(item.TemplateName) ? SelectedSummaryTemplate : item.TemplateName);
     _activeSpeakerAliases = new Dictionary<string, string>(item.SpeakerAliases ?? new Dictionary<string, string>());
     BuildSpeakerAliasPanel();
     BuildMeetingWarningsPanel(item);
@@ -1465,6 +1528,8 @@ private void OpenMeetingDetail(MeetingItem item)
     OnPropertyChanged(nameof(SelectedMeetingTitle));
     OnPropertyChanged(nameof(SelectedMeetingMetadata));
     OnPropertyChanged(nameof(SelectedMeetingNotes));
+    OnPropertyChanged(nameof(SelectedMeetingTemplate));
+    OnPropertyChanged(nameof(SelectedMeetingNotesActionLabel));
     OnPropertyChanged(nameof(SelectedMeetingTranscript));
     MeetingsBrowserView.Visibility = Visibility.Collapsed;
     MeetingDetailView.Visibility = Visibility.Visible;
@@ -1532,6 +1597,7 @@ private void BackToMeetings_Click(object sender, RoutedEventArgs e)
 {
     SaveActiveSpeakerAliases();
     _selectedMeeting = null;
+    _selectedMeetingTemplate = NormalizeSummaryTemplateName(SelectedSummaryTemplate);
     MeetingsBrowserView.Visibility = Visibility.Visible;
     MeetingDetailView.Visibility = Visibility.Collapsed;
     MeetingWarningsPanel.Visibility = Visibility.Collapsed;
@@ -1695,22 +1761,79 @@ private static System.Windows.Controls.Grid CreateWrappedNoteRow(UIElement leadi
     return row;
 }
 
+private static void SetMarkdownInlineText(TextBlock target, string text)
+{
+    target.Inlines.Clear();
+    var matches = System.Text.RegularExpressions.Regex.Matches(text, @"\*\*(.+?)\*\*");
+    if (matches.Count == 0)
+    {
+        target.Text = text;
+        return;
+    }
+
+    target.Text = "";
+    var index = 0;
+    foreach (System.Text.RegularExpressions.Match match in matches)
+    {
+        if (match.Index > index)
+        {
+            target.Inlines.Add(new System.Windows.Documents.Run(text[index..match.Index]));
+        }
+
+        target.Inlines.Add(new System.Windows.Documents.Bold(new System.Windows.Documents.Run(match.Groups[1].Value)));
+        index = match.Index + match.Length;
+    }
+
+    if (index < text.Length)
+    {
+        target.Inlines.Add(new System.Windows.Documents.Run(text[index..]));
+    }
+}
+
 private void BuildMeetingNotesContent()
 {
     MeetingNotesContent.Children.Clear();
 
     var text = SelectedMeetingNotes;
-    if (string.IsNullOrWhiteSpace(text)
-        || text.Equals("No generated notes yet. The raw transcript is available below.", StringComparison.OrdinalIgnoreCase))
+    if (string.IsNullOrWhiteSpace(text))
     {
-        MeetingNotesContent.Children.Add(new TextBlock
+        var emptyState = new StackPanel
         {
-            Text = "No notes yet.",
+            Margin = new Thickness(0, 10, 0, 4)
+        };
+        emptyState.Children.Add(new TextBlock
+        {
+            Text = "\uE70F",
+            FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+            FontSize = 28,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextTertiaryBrush"),
+            Margin = new Thickness(0, 0, 0, 10)
+        });
+        emptyState.Children.Add(new TextBlock
+        {
+            Text = "No notes yet",
+            FontSize = 18,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        emptyState.Children.Add(new TextBlock
+        {
+            Text = "Generate structured notes from this meeting transcript using the selected template.",
             FontSize = 14,
             Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
-            FontStyle = FontStyles.Italic,
-            Margin = new Thickness(0, 8, 0, 8)
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 14)
         });
+        var generateButton = new WpfButton
+        {
+            Content = "Generate Notes",
+            Style = (Style)FindResource("PrimaryButton"),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Left
+        };
+        generateButton.Click += GenerateSelectedMeetingNotes_Click;
+        emptyState.Children.Add(generateButton);
+        MeetingNotesContent.Children.Add(emptyState);
         return;
     }
 
@@ -1736,7 +1859,7 @@ private void BuildMeetingNotesContent()
                 FontSize = level == 1 ? 22 : (level == 2 ? 17 : 14),
                 Foreground = (System.Windows.Media.Brush)FindResource(level <= 2 ? "TextPrimaryBrush" : "TextSecondaryBrush"),
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, level == 1 ? 0 : 12, 0, 6)
+                Margin = new Thickness(0, level == 1 ? 4 : 18, 0, level == 3 ? 6 : 10)
             });
             continue;
         }
@@ -1768,11 +1891,12 @@ private void BuildMeetingNotesContent()
             };
             var content = new TextBlock
             {
-                Text = itemText,
                 FontSize = 14,
                 Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
-                VerticalAlignment = VerticalAlignment.Top
+                VerticalAlignment = VerticalAlignment.Top,
+                TextWrapping = TextWrapping.Wrap
             };
+            SetMarkdownInlineText(content, itemText);
             MeetingNotesContent.Children.Add(CreateWrappedNoteRow(icon, content));
             continue;
         }
@@ -1791,10 +1915,11 @@ private void BuildMeetingNotesContent()
             };
             var content = new TextBlock
             {
-                Text = bulletText,
                 FontSize = 14,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+                TextWrapping = TextWrapping.Wrap
             };
+            SetMarkdownInlineText(content, bulletText);
             MeetingNotesContent.Children.Add(CreateWrappedNoteRow(bullet, content));
             continue;
         }
@@ -1815,22 +1940,92 @@ private void BuildMeetingNotesContent()
             };
             var content = new TextBlock
             {
-                Text = numText,
                 FontSize = 14,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+                TextWrapping = TextWrapping.Wrap
             };
+            SetMarkdownInlineText(content, numText);
             MeetingNotesContent.Children.Add(CreateWrappedNoteRow(index, content));
             continue;
         }
 
-        MeetingNotesContent.Children.Add(new TextBlock
+        var paragraph = new TextBlock
         {
-            Text = line,
             FontSize = 14,
             Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 2, 0, 2)
-        });
+            Margin = new Thickness(0, 4, 0, 4),
+            LineHeight = 22
+        };
+        SetMarkdownInlineText(paragraph, line);
+        MeetingNotesContent.Children.Add(paragraph);
+    }
+}
+private async void GenerateSelectedMeetingNotes_Click(object sender, RoutedEventArgs e)
+{
+    await GenerateSelectedMeetingNotesAsync();
+}
+
+private async Task GenerateSelectedMeetingNotesAsync()
+{
+    if (_selectedMeeting is null || string.IsNullOrWhiteSpace(_selectedMeeting.Transcript))
+    {
+        return;
+    }
+
+    if (!string.IsNullOrWhiteSpace(_selectedMeeting.Summary))
+    {
+        var result = System.Windows.MessageBox.Show(
+            $"Regenerate notes for \"{_selectedMeeting.Title}\" using the \"{SelectedMeetingTemplate}\" template?",
+            "Regenerate notes",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+    }
+
+    try
+    {
+        DictationStatus = "Generating meeting notes";
+        _toastNotificationService.Show("Generating notes", SelectedMeetingTemplate, ToastState.Transcribing, 0);
+        var summary = await MeetingSummaryService.CreateSummaryAsync(
+            _selectedMeeting.Transcript,
+            _selectedMeeting.Title,
+            CurrentSettingsSnapshot() with
+            {
+                MeetingSummaryTemplate = SelectedMeetingTemplate,
+                MeetingSummaryPromptOverride = CustomMeetingTemplates.FirstOrDefault(template =>
+                    template.Name.Equals(SelectedMeetingTemplate, StringComparison.OrdinalIgnoreCase))?.Prompt ?? ""
+            });
+
+        var index = Meetings.IndexOf(_selectedMeeting);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var updated = _selectedMeeting with
+        {
+            Summary = summary,
+            TemplateName = SelectedMeetingTemplate
+        };
+        Meetings[index] = updated;
+        _selectedMeeting = updated;
+        SaveMeetings();
+        RefreshSearchResults();
+        BuildMeetingWarningsPanel(updated);
+        BuildMeetingNotesContent();
+        OnPropertyChanged(nameof(SelectedMeetingNotes));
+        OnPropertyChanged(nameof(SelectedMeetingNotesActionLabel));
+        DictationStatus = "Meeting notes ready";
+        _toastNotificationService.Show("Notes ready", updated.Title, ToastState.Success, 2800);
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Notes generation failed: {exception.Message}";
+        _toastNotificationService.Show("Notes generation failed", exception.Message, ToastState.Error, 4200);
     }
 }
 
@@ -1868,6 +2063,12 @@ private void CopySelectedMeetingNotes_Click(object sender, RoutedEventArgs e)
 {
     if (_selectedMeeting is null)
     {
+        return;
+    }
+    if (string.IsNullOrWhiteSpace(SelectedMeetingNotes))
+    {
+        DictationStatus = "No notes to copy";
+        _toastNotificationService.Show("No notes yet", "Generate notes first", ToastState.Error, 2600);
         return;
     }
     System.Windows.Clipboard.SetText(SelectedMeetingNotes);
@@ -2952,6 +3153,17 @@ private static string FilterLabel(string filter)
         _ => "All time"
     };
 }
+private string NormalizeSummaryTemplateName(string? value)
+{
+    var normalized = MeetingSummaryService.NormalizeTemplateName(value);
+    if (MeetingSummaryService.IsBuiltInTemplate(normalized))
+    {
+        return normalized;
+    }
+
+    var custom = SummaryTemplates.FirstOrDefault(template => template.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+    return custom ?? "Standard Meeting Notes";
+}
 private void ShowPage(UIElement activePage, System.Windows.Controls.Button activeNav)
 {
     foreach (var page in new UIElement[]
@@ -3210,6 +3422,7 @@ private async Task RefreshRuntimeDiagnosticsAsync()
     {
         RuntimeDiagnostics = "Checking runtime...";
         SetupReadiness = "Checking setup...";
+        RuntimeSetupStatus = "";
         var diagnostics = await _runtimeDiagnosticsService.InspectAsync();
         RuntimeDiagnostics = diagnostics.Summary;
         ModelCacheDirectory = diagnostics.ModelCacheDirectory;
@@ -3222,6 +3435,8 @@ private async Task RefreshRuntimeDiagnosticsAsync()
     {
         RuntimeDiagnostics = $"Diagnostics failed: {exception.Message}";
         SetupReadiness = "Setup check failed. Open logs for details.";
+        RuntimeSetupStatus = "Setup check failed. Open logs for details.";
+        CanInstallLocalRuntime = !string.IsNullOrWhiteSpace(WorkerRuntimeLocator.FindSetupScriptOrNull());
         TranscriptionWorkerStatus = "Needs setup";
         WhisperRuntimeStatus = "Needs setup";
         SelectedModelCacheStatus = "Not downloaded";
@@ -3243,6 +3458,9 @@ private void ApplyRuntimeDiagnostics(RuntimeDiagnostics diagnostics)
     var diarizationOk = HasReadySignal(diagnostics.DiarizationDependencyStatus);
     var selectedModelCached = SelectedAsrEngine != "whisper" || _runtimeDiagnosticsService.IsWhisperModelCached(SelectedModelProfile);
     var hasHfToken = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HF_TOKEN"));
+    var hasPythonOverride = HasValidPythonOverride();
+    var setupScriptAvailable = !string.Equals(diagnostics.SetupScript, "setup-worker-runtime.ps1 not found", StringComparison.OrdinalIgnoreCase);
+    var workerAssetsPresent = WorkerRuntimeLocator.HasWorkerRequirementsLayout();
 
     TranscriptionWorkerStatus = workerOk ? "Ready" : "Needs setup";
     WhisperRuntimeStatus = whisperOk ? "Ready" : "Needs setup";
@@ -3253,7 +3471,30 @@ private void ApplyRuntimeDiagnostics(RuntimeDiagnostics diagnostics)
     ParakeetRuntimeStatus = parakeetOk ? "Ready" : "Optional, not installed";
     DiarizationDependencyStatus = SpeakerDiarizationStatusLabel;
     DiarizationTokenStatus = hasHfToken ? "Configured" : "Optional if model access fails";
-    SetupReadiness = BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk);
+    CanInstallLocalRuntime = !hasPythonOverride && setupScriptAvailable && workerAssetsPresent && (!workerOk || !whisperOk);
+    if (workerOk && whisperOk)
+    {
+        RuntimeSetupStatus = selectedModelCached
+            ? "Local transcription runtime is installed."
+            : "Local runtime is ready. Download a Whisper model before offline use.";
+    }
+    else if (hasPythonOverride)
+    {
+        RuntimeSetupStatus = "MUESLI_PYTHON override is active. Fix that Python environment or clear the override to use Muesli's setup flow.";
+    }
+    else if (!workerAssetsPresent)
+    {
+        RuntimeSetupStatus = "This install is missing worker runtime files. Reinstall Muesli.";
+    }
+    else if (!setupScriptAvailable)
+    {
+        RuntimeSetupStatus = "Runtime setup script is missing from this build. Reinstall Muesli.";
+    }
+    else
+    {
+        RuntimeSetupStatus = "Install local transcription runtime to finish setup.";
+    }
+    SetupReadiness = BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk, setupScriptAvailable, workerAssetsPresent, hasPythonOverride);
 }
 private string BuildSetupReadiness(RuntimeDiagnostics diagnostics)
 {
@@ -3261,18 +3502,33 @@ private string BuildSetupReadiness(RuntimeDiagnostics diagnostics)
     var whisperOk = HasReadySignal(diagnostics.DependencyStatus);
     var selectedModelCached = SelectedAsrEngine != "whisper" || _runtimeDiagnosticsService.IsWhisperModelCached(SelectedModelProfile);
     var diarizationOk = HasReadySignal(diagnostics.DiarizationDependencyStatus);
-    return BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk);
+    var setupScriptAvailable = !string.Equals(diagnostics.SetupScript, "setup-worker-runtime.ps1 not found", StringComparison.OrdinalIgnoreCase);
+    var workerAssetsPresent = WorkerRuntimeLocator.HasWorkerRequirementsLayout();
+    var hasPythonOverride = HasValidPythonOverride();
+    return BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk, setupScriptAvailable, workerAssetsPresent, hasPythonOverride);
 }
-private string BuildSetupReadiness(bool workerOk, bool whisperOk, bool selectedModelCached, bool diarizationOk)
+private string BuildSetupReadiness(bool workerOk, bool whisperOk, bool selectedModelCached, bool diarizationOk, bool setupScriptAvailable, bool workerAssetsPresent, bool hasPythonOverride)
 {
     var lines = new List<string>();
-    if (workerOk && whisperOk)
+    if (!workerAssetsPresent)
+    {
+        lines.Add("This install is missing worker runtime files. Reinstall Muesli.");
+    }
+    else if (workerOk && whisperOk)
     {
         lines.Add("Core transcription is ready.");
     }
+    else if (hasPythonOverride)
+    {
+        lines.Add("MUESLI_PYTHON override is active. Fix that Python environment or clear the override to use the built-in setup flow.");
+    }
+    else if (setupScriptAvailable)
+    {
+        lines.Add("Local transcription setup still needs attention. Use Install local transcription runtime.");
+    }
     else
     {
-        lines.Add("Local transcription setup still needs attention.");
+        lines.Add("Local transcription setup still needs attention, and the setup script is missing from this build.");
     }
 
     lines.Add(selectedModelCached
@@ -3286,6 +3542,80 @@ private string BuildSetupReadiness(bool workerOk, bool whisperOk, bool selectedM
 
     return string.Join(Environment.NewLine, lines);
 }
+private async Task InstallLocalRuntimeAsync(Action<string>? onStatus = null, Action? onAfterRefresh = null)
+{
+    if (_isInstallingLocalRuntime)
+    {
+        return;
+    }
+
+    if (!CanInstallLocalRuntime)
+    {
+        var message = string.IsNullOrWhiteSpace(RuntimeSetupStatus)
+            ? "Local transcription runtime setup is not available."
+            : RuntimeSetupStatus;
+        onStatus?.Invoke(message);
+        return;
+    }
+
+    try
+    {
+        _isInstallingLocalRuntime = true;
+        RuntimeSetupStatus = "Preparing local transcription runtime...";
+        onStatus?.Invoke(RuntimeSetupStatus);
+        DictationStatus = "Installing local transcription runtime";
+        _toastNotificationService.Show("Installing runtime", "Preparing local transcription runtime", ToastState.Transcribing, 0);
+        _logService.Info("Starting local transcription runtime setup from onboarding.");
+
+        var result = await _runtimeDiagnosticsService.InstallLocalRuntimeAsync(progress =>
+        {
+            var message = MapRuntimeSetupProgress(progress);
+            if (message is null)
+            {
+                return;
+            }
+
+            RuntimeSetupStatus = message;
+            onStatus?.Invoke(message);
+        });
+
+        if (result.Detail.Length > 0)
+        {
+            _logService.Info($"Runtime setup output:{Environment.NewLine}{result.Detail}");
+        }
+
+        await RefreshRuntimeDiagnosticsAsync();
+        onAfterRefresh?.Invoke();
+
+        if (result.Success)
+        {
+            RuntimeSetupStatus = "Local transcription runtime installed. Check setup is now passing.";
+            onStatus?.Invoke(RuntimeSetupStatus);
+            DictationStatus = "Local transcription runtime installed";
+            _toastNotificationService.Show("Runtime ready", "Local transcription runtime installed", ToastState.Success, 3600);
+        }
+        else
+        {
+            RuntimeSetupStatus = "Runtime setup failed. Open logs for details.";
+            onStatus?.Invoke(RuntimeSetupStatus);
+            DictationStatus = "Runtime setup failed";
+            _toastNotificationService.Show("Runtime setup failed", result.Summary, ToastState.Error, 5200);
+        }
+    }
+    catch (Exception exception)
+    {
+        RuntimeSetupStatus = "Runtime setup failed. Open logs for details.";
+        onStatus?.Invoke(RuntimeSetupStatus);
+        DictationStatus = $"Runtime setup failed: {exception.Message}";
+        _logService.Error("Runtime setup failed.", exception);
+        _toastNotificationService.Show("Runtime setup failed", "Open logs for details", ToastState.Error, 5200);
+    }
+    finally
+    {
+        _isInstallingLocalRuntime = false;
+        onAfterRefresh?.Invoke();
+    }
+}
 private static bool HasReadySignal(string status)
 {
     if (string.IsNullOrWhiteSpace(status))
@@ -3296,6 +3626,48 @@ private static bool HasReadySignal(string status)
     return status.Contains("OK", StringComparison.OrdinalIgnoreCase) ||
            status.Contains("ready", StringComparison.OrdinalIgnoreCase) ||
            status.Contains("installed", StringComparison.OrdinalIgnoreCase);
+}
+private static string? MapRuntimeSetupProgress(string rawLine)
+{
+    if (string.IsNullOrWhiteSpace(rawLine))
+    {
+        return null;
+    }
+
+    var line = rawLine.Trim();
+    if (line.Contains("Supported Python launcher found", StringComparison.OrdinalIgnoreCase))
+    {
+        return "Found a supported Python runtime.";
+    }
+
+    if (line.Contains("Collecting", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("Downloading", StringComparison.OrdinalIgnoreCase))
+    {
+        return "Downloading Python packages...";
+    }
+
+    if (line.Contains("Installing collected packages", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("Successfully installed", StringComparison.OrdinalIgnoreCase))
+    {
+        return "Installing transcription dependencies...";
+    }
+
+    if (line.Contains("Requirement already satisfied", StringComparison.OrdinalIgnoreCase))
+    {
+        return "Checking installed transcription dependencies...";
+    }
+
+    if (line.Contains("Muesli worker runtime is ready", StringComparison.OrdinalIgnoreCase))
+    {
+        return "Local transcription runtime is ready.";
+    }
+
+    return null;
+}
+private static bool HasValidPythonOverride()
+{
+    var path = Environment.GetEnvironmentVariable("MUESLI_PYTHON");
+    return !string.IsNullOrWhiteSpace(path) && File.Exists(path);
 }
 private MuesliSettings CurrentSettingsSnapshot()
 {
