@@ -393,6 +393,19 @@
                        ItemContainerStyle="{StaticResource MuesliListBoxItem}"
                        MouseDoubleClick="DictationsList_MouseDoubleClick"
                        Visibility="{Binding HasDictations, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ListBox.GroupStyle>
+                  <GroupStyle>
+                    <GroupStyle.HeaderTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Name}"
+                                   Margin="20,18,20,2"
+                                   FontSize="13"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                      </DataTemplate>
+                    </GroupStyle.HeaderTemplate>
+                  </GroupStyle>
+                </ListBox.GroupStyle>
                 <ListBox.ItemTemplate>
                   <DataTemplate>
                     <Grid Margin="20,16"
@@ -590,6 +603,17 @@
                   <TextBlock Text="GENERAL" Style="{StaticResource SectionLabel}" />
                   <Border Style="{StaticResource ContentCard}">
                     <StackPanel>
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="220" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Your name" Style="{StaticResource SettingsRowLabel}" />
+                        <TextBox Grid.Column="1"
+                                 Style="{StaticResource MuesliTextBox}"
+                                 Text="{Binding UserName, UpdateSourceTrigger=PropertyChanged}" />
+                      </Grid>
+                      <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
                       <CheckBox Style="{StaticResource MuesliCheckBox}" Content="Launch at login" IsChecked="{Binding StartAtLogin}" />
                       <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
                       <CheckBox Style="{StaticResource MuesliCheckBox}" Content="Open dashboard on launch" IsChecked="{Binding OpenDashboardOnLaunch}" />
@@ -824,32 +848,76 @@
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
               <StackPanel>
-                <TextBlock Text="First-run Setup" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
-                <TextBlock Text="Check local worker readiness, cache the selected Whisper model, and open support logs for bug reports." Margin="0,6,0,12" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                <TextBox Text="{Binding SetupReadiness, Mode=OneWay}"
-                         MinHeight="96"
-                         Padding="12"
-                         TextWrapping="Wrap"
-                         AcceptsReturn="True"
-                         Background="{DynamicResource BackgroundHoverBrush}"
-                         BorderBrush="{DynamicResource BorderBrushSoft}"
-                         Foreground="{DynamicResource TextPrimaryBrush}"
-                         FontSize="13"
-                         IsReadOnly="True"
-                         Cursor="IBeam" />
-                <TextBox Text="{Binding RuntimeDiagnostics, Mode=OneWay}"
-                         Margin="0,10,0,0"
-                         MinHeight="150"
-                         Padding="12"
-                         TextWrapping="Wrap"
-                         AcceptsReturn="True"
-                         Background="{DynamicResource BackgroundHoverBrush}"
-                         BorderBrush="{DynamicResource BorderBrushSoft}"
-                         Foreground="{DynamicResource TextSecondaryBrush}"
-                         FontFamily="Consolas"
-                         FontSize="12"
-                         IsReadOnly="True"
-                         Cursor="IBeam" />
+                <TextBlock Text="Runtime status" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+                <TextBlock Text="{Binding SetupReadiness, Mode=OneWay}" Margin="0,6,0,12" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                <StackPanel>
+                  <Border Margin="0,0,0,10" Padding="12,10" Background="{DynamicResource BackgroundHoverBrush}" BorderBrush="{DynamicResource BorderBrushSoft}" BorderThickness="1" CornerRadius="8">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Transcription worker" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                      <Border Grid.Column="1" Padding="10,4" Background="{DynamicResource SurfacePrimaryBrush}" CornerRadius="999" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding TranscriptionWorkerStatus, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                      </Border>
+                    </Grid>
+                  </Border>
+                  <Border Margin="0,0,0,10" Padding="12,10" Background="{DynamicResource BackgroundHoverBrush}" BorderBrush="{DynamicResource BorderBrushSoft}" BorderThickness="1" CornerRadius="8">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Whisper" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                      <Border Grid.Column="1" Padding="10,4" Background="{DynamicResource SurfacePrimaryBrush}" CornerRadius="999" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding WhisperRuntimeStatus, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                      </Border>
+                    </Grid>
+                  </Border>
+                  <Border Margin="0,0,0,10" Padding="12,10" Background="{DynamicResource BackgroundHoverBrush}" BorderBrush="{DynamicResource BorderBrushSoft}" BorderThickness="1" CornerRadius="8">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Selected model" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                      <Border Grid.Column="1" Padding="10,4" Background="{DynamicResource SurfacePrimaryBrush}" CornerRadius="999" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SelectedModelCacheStatus, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                      </Border>
+                    </Grid>
+                  </Border>
+                  <Border Margin="0,0,0,10" Padding="12,10" Background="{DynamicResource BackgroundHoverBrush}" BorderBrush="{DynamicResource BorderBrushSoft}" BorderThickness="1" CornerRadius="8">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Speaker diarization" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                      <Border Grid.Column="1" Padding="10,4" Background="{DynamicResource SurfacePrimaryBrush}" CornerRadius="999" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SpeakerDiarizationStatusLabel, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                      </Border>
+                    </Grid>
+                  </Border>
+                  <Border Padding="12,10" Background="{DynamicResource BackgroundHoverBrush}" BorderBrush="{DynamicResource BorderBrushSoft}" BorderThickness="1" CornerRadius="8">
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="GPU" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+                      <Border Grid.Column="1" Padding="10,4" Background="{DynamicResource SurfacePrimaryBrush}" CornerRadius="999" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding GpuRuntimeStatus, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                      </Border>
+                    </Grid>
+                  </Border>
+                </StackPanel>
+                <TextBlock Margin="0,12,0,0" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap">
+                  <Run Text="Optional backends: Qwen " />
+                  <Run Text="{Binding QwenRuntimeStatus, Mode=OneWay}" />
+                  <Run Text=" • Parakeet " />
+                  <Run Text="{Binding ParakeetRuntimeStatus, Mode=OneWay}" />
+                </TextBlock>
                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                   <Button Style="{StaticResource SecondaryButton}" Content="Check setup" Click="RefreshRuntimeDiagnostics_Click" />
                   <Button Margin="10,0,0,0" Style="{StaticResource PrimaryButton}" Content="Download selected" Click="DownloadWhisperModel_Click" />
@@ -857,6 +925,24 @@
                   <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Open logs" Click="OpenLogs_Click" />
                   <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Clear cache" Foreground="{DynamicResource ErrorRedBrush}" Click="ClearModelCache_Click" />
                 </StackPanel>
+                <Expander Margin="0,12,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                  <Expander.Header>
+                    <TextBlock Text="Advanced diagnostics" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondaryBrush}" />
+                  </Expander.Header>
+                  <TextBox Text="{Binding RuntimeDiagnostics, Mode=OneWay}"
+                           Margin="0,10,0,0"
+                           MinHeight="150"
+                           Padding="12"
+                           TextWrapping="Wrap"
+                           AcceptsReturn="True"
+                           Background="{DynamicResource BackgroundHoverBrush}"
+                           BorderBrush="{DynamicResource BorderBrushSoft}"
+                           Foreground="{DynamicResource TextSecondaryBrush}"
+                           FontFamily="Consolas"
+                           FontSize="12"
+                           IsReadOnly="True"
+                           Cursor="IBeam" />
+                </Expander>
               </StackPanel>
               <Border Grid.Column="1" Height="28" Padding="10,0" CornerRadius="5" Background="{DynamicResource SurfacePrimaryBrush}" VerticalAlignment="Top">
                 <TextBlock Text="{Binding ModelCacheSize}" VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextTertiaryBrush}" />
@@ -991,15 +1077,15 @@
               <StackPanel>
                 <StackPanel Orientation="Horizontal">
                   <Image Source="Assets/openai.png" Width="24" Height="24" Stretch="Uniform" Margin="0,0,10,0" />
-                  <TextBlock Text="Speaker Diarization" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
+                <TextBlock Text="Speaker Diarization" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" VerticalAlignment="Center" />
                 </StackPanel>
                 <TextBlock Text="Required for Speaker 1 / Speaker 2 labels in meeting transcripts. Uses pyannote.audio to identify individual speakers from system audio." Margin="0,8,0,12" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                  <TextBlock Text="Dependencies" Width="90" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
+                  <TextBlock Text="Status" Width="90" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
                   <TextBlock Text="{Binding DiarizationDependencyStatus, Mode=OneWay}" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                  <TextBlock Text="HF Token" Width="90" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
+                  <TextBlock Text="Access" Width="90" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}" />
                   <TextBlock Text="{Binding DiarizationTokenStatus, Mode=OneWay}" VerticalAlignment="Center" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal">

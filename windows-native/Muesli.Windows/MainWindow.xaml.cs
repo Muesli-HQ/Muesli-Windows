@@ -42,6 +42,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         Interval = TimeSpan.FromMilliseconds(400)
     };
+    private readonly System.Windows.Threading.DispatcherTimer _hotkeyReleaseTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(320)
+    };
 
     private string _dictationStatus = "Ready";
     private string? _selectedMicrophone;
@@ -51,6 +55,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _selectedPasteBehavior = "active-app";
     private string _selectedSummaryProvider = "local";
     private string _selectedSummaryTemplate = "standard";
+    private string _userName = "";
     private string _openAIApiKey = "";
     private string _openAIModel = "gpt-5.4-mini";
     private string _openRouterApiKey = "";
@@ -71,11 +76,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _meetingsExpanded = true;
     private bool _meetingSortNewestFirst = true;
     private bool _isCapturingHotkey;
+    private bool _awaitingHandsFreeSecondTap;
+    private bool _isHandsFreeDictationLocked;
     private bool _runtimeStarted;
     private bool _isParkedForBackground;
     private bool _isWorkAreaMaximized;
     private Rect _restoreBounds;
-    private DateTime _lastHotkeyTapUtc = DateTime.MinValue;
     private string _dictationDateFilter = "all";
     private string _meetingDateFilter = "all";
     private string _searchQuery = "";
@@ -92,6 +98,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _modelCacheDirectory = "";
     private string _modelCacheSize = "0 B";
     private string _setupReadiness = "Setup not checked yet.";
+    private string _transcriptionWorkerStatus = "Not checked";
+    private string _whisperRuntimeStatus = "Not checked";
+    private string _selectedModelCacheStatus = "Not checked";
+    private string _speakerDiarizationStatusLabel = "Not checked";
+    private string _gpuRuntimeStatus = "Not checked";
+    private string _qwenRuntimeStatus = "Not checked";
+    private string _parakeetRuntimeStatus = "Not checked";
     private string _diarizationDependencyStatus = "Not checked yet.";
     private string _diarizationTokenStatus = "Not checked yet.";
     private string _meetingDetectionStatus = "Meeting detection has not scanned yet.";
@@ -137,8 +150,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         get
         {
-            var name = Environment.UserName.Trim();
+            var name = UserName.Trim();
             return string.IsNullOrWhiteSpace(name) ? "" : $"Hi, {name}";
+        }
+    }
+
+    public string UserName
+    {
+        get => _userName;
+        set
+        {
+            if (SetField(ref _userName, value?.Trim() ?? ""))
+            {
+                OnPropertyChanged(nameof(UserGreeting));
+                SaveSettings();
+            }
         }
     }
 
@@ -166,7 +192,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string CurrentMeetingFolderName => _selectedMeetingFolderId is null
         ? "All Meetings"
         : MeetingFolders.FirstOrDefault(folder => folder.Id == _selectedMeetingFolderId)?.Name ?? "All Meetings";
-    public string DictationHeaderLabel => _dictationDateFilter == "all" ? "TODAY" : FilterLabel(_dictationDateFilter).ToUpperInvariant();
+    public string DictationHeaderLabel => "DICTATIONS";
     public string DictationFilterLabel => _dictationDateFilter == "all" ? "" : FilterLabel(_dictationDateFilter);
     public string MeetingFilterLabel => _meetingDateFilter == "all" ? "" : FilterLabel(_meetingDateFilter);
     public string SearchResultsTitle => string.IsNullOrWhiteSpace(SearchQuery) ? "Search" : $"Search results for \"{SearchQuery.Trim()}\"";
@@ -204,7 +230,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string ActiveModelLabel => SelectedAsrEngine == "parakeet-v3" ? "Parakeet v3" : $"Whisper {SelectedModelProfile}";
     public string WhisperStatusLabel => SelectedAsrEngine == "whisper" ? "Active" : "Downloaded";
     public string ParakeetStatusLabel => SelectedAsrEngine == "parakeet-v3" ? "Active" : "Optional";
-    public string ShortcutModeLabel => EnableDoubleTapDictation ? "Double-tap to start, tap again to stop" : "Hold to record, release to transcribe";
+    public string ShortcutModeLabel => EnableDoubleTapDictation ? "Hold to talk, or double-tap to lock recording" : "Hold to record, release to transcribe";
     public string CaptureHotkeyButtonText => _isCapturingHotkey ? "Press shortcut..." : "Record shortcut";
     public string ShortcutCaptureLabel => _isCapturingHotkey
         ? "Press a function key or a modifier shortcut such as Ctrl+Shift+Space. Press Esc to cancel."
@@ -220,6 +246,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         get => _runtimeDiagnostics;
         private set => SetField(ref _runtimeDiagnostics, value);
+    }
+    public string TranscriptionWorkerStatus
+    {
+        get => _transcriptionWorkerStatus;
+        private set => SetField(ref _transcriptionWorkerStatus, value);
+    }
+    public string WhisperRuntimeStatus
+    {
+        get => _whisperRuntimeStatus;
+        private set => SetField(ref _whisperRuntimeStatus, value);
+    }
+    public string SelectedModelCacheStatus
+    {
+        get => _selectedModelCacheStatus;
+        private set => SetField(ref _selectedModelCacheStatus, value);
+    }
+    public string SpeakerDiarizationStatusLabel
+    {
+        get => _speakerDiarizationStatusLabel;
+        private set => SetField(ref _speakerDiarizationStatusLabel, value);
+    }
+    public string GpuRuntimeStatus
+    {
+        get => _gpuRuntimeStatus;
+        private set => SetField(ref _gpuRuntimeStatus, value);
+    }
+    public string QwenRuntimeStatus
+    {
+        get => _qwenRuntimeStatus;
+        private set => SetField(ref _qwenRuntimeStatus, value);
+    }
+    public string ParakeetRuntimeStatus
+    {
+        get => _parakeetRuntimeStatus;
+        private set => SetField(ref _parakeetRuntimeStatus, value);
     }
     public string ModelCacheDirectory
     {
@@ -331,7 +392,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return;
             }
 
-            DictationStatus = EnableDoubleTapDictation ? $"Double-tap {_selectedHotkey} to dictate" : $"Hold {_selectedHotkey} to dictate";
+            DictationStatus = EnableDoubleTapDictation
+                ? $"Hold {_selectedHotkey} to dictate, or double-tap for hands-free"
+                : $"Hold {_selectedHotkey} to dictate";
             SaveSettings();
             OnPropertyChanged(nameof(ShortcutModeLabel));
             _toastNotificationService.ShowIdle(_selectedHotkey);
@@ -369,10 +432,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SetField(ref _enableDoubleTapDictation, value))
             {
-                _lastHotkeyTapUtc = DateTime.MinValue;
+                ResetHotkeyDictationState();
                 SaveSettings();
                 OnPropertyChanged(nameof(ShortcutModeLabel));
-                DictationStatus = value ? "Hands-Free Mode enabled" : $"Hold {SelectedHotkey} to dictate";
+                DictationStatus = value
+                    ? $"Hold {SelectedHotkey} to dictate, or double-tap for hands-free"
+                    : $"Hold {SelectedHotkey} to dictate";
             }
         }
     }
@@ -572,6 +637,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         InitializeComponent();
         FilteredDictations = CollectionViewSource.GetDefaultView(Dictations);
         FilteredDictations.Filter = item => PassesDateFilter(item, _dictationDateFilter) && PassesSearch(item);
+        if (FilteredDictations is ListCollectionView dictationView)
+        {
+            dictationView.SortDescriptions.Clear();
+            dictationView.SortDescriptions.Add(new SortDescription(nameof(DictationItem.Timestamp), ListSortDirection.Descending));
+            dictationView.GroupDescriptions.Clear();
+            dictationView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(DictationItem.DateGroupLabel)));
+        }
         FilteredMeetings = CollectionViewSource.GetDefaultView(Meetings);
         FilteredMeetings.Filter = item => PassesDateFilter(item, _meetingDateFilter) && PassesMeetingFolder(item) && PassesSearch(item);
         SearchDictationResults = new ListCollectionView(Dictations);
@@ -580,6 +652,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SearchMeetingResults.Filter = item => PassesSearch(item) && !string.IsNullOrWhiteSpace(_searchQuery);
         DataContext = this;
         UpcomingMeetings.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasUpcomingMeetings));
+        _hotkeyReleaseTimer.Tick += HotkeyReleaseTimer_Tick;
 
         var settings = _settingsStore.Load();
         LoadPersistedData();
@@ -596,6 +669,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _selectedHotkey = NormalizeHotkey(settings.Hotkey, allowCustom: true);
         AddHotkeyOptionIfMissing(_selectedHotkey);
         _selectedPasteBehavior = PasteBehaviors.Contains(settings.PasteBehavior) ? settings.PasteBehavior : "active-app";
+        _userName = string.IsNullOrWhiteSpace(settings.UserName) ? Environment.UserName.Trim() : settings.UserName.Trim();
         _onboardingCompleted = settings.OnboardingCompleted;
         _selectedSummaryProvider = SummaryProviders.Contains(settings.MeetingSummaryProvider) ? settings.MeetingSummaryProvider : "local";
         _selectedSummaryTemplate = SummaryTemplates.Contains(settings.MeetingSummaryTemplate) ? settings.MeetingSummaryTemplate : "standard";
@@ -629,6 +703,8 @@ OnPropertyChanged(nameof(SelectedMicrophone));
     OnPropertyChanged(nameof(SelectedModelProfile));
     OnPropertyChanged(nameof(SelectedHotkey));
     OnPropertyChanged(nameof(SelectedPasteBehavior));
+    OnPropertyChanged(nameof(UserName));
+    OnPropertyChanged(nameof(UserGreeting));
     OnPropertyChanged(nameof(SelectedSummaryProvider));
     OnPropertyChanged(nameof(SelectedSummaryTemplate));
     OnPropertyChanged(nameof(OpenAIApiKey));
@@ -794,6 +870,13 @@ private void ShowOnboardingIfNeeded()
         Text = "Choose a microphone, pick a shortcut that is free on this Windows laptop, and verify local model readiness.",
         Style = (Style)FindResource("PageSubtitle")
     });
+    var nameInput = new WpfTextBox
+    {
+        Text = UserName,
+        MinWidth = 260,
+        Style = (Style)FindResource("MuesliTextBox")
+    };
+    body.Children.Add(BuildOnboardingRow("Your name", "Shown in the sidebar greeting.", nameInput));
     var micCombo = new System.Windows.Controls.ComboBox
     {
         ItemsSource = MicrophoneDevices,
@@ -870,6 +953,7 @@ private void ShowOnboardingIfNeeded()
     };
     finish.Click += (_, _) =>
     {
+        UserName = string.IsNullOrWhiteSpace(nameInput.Text) ? UserName : nameInput.Text.Trim();
         SelectedMicrophone = micCombo.SelectedItem as string ?? SelectedMicrophone;
         SelectedHotkey = hotkeyCombo.SelectedItem as string ?? SelectedHotkey;
         StartAtLogin = startupCheck.IsChecked == true;
@@ -1082,30 +1166,47 @@ private async Task HandleHotkeyDownAsync()
         await StartHotkeyDictationAsync();
         return;
     }
+
+    if (_isHandsFreeDictationLocked)
+    {
+        ResetHotkeyDictationState();
+        await StopDictationAsync();
+        return;
+    }
+
     if (_dictationCoordinator.IsRecording)
     {
-        await StopDictationAsync();
-        _lastHotkeyTapUtc = DateTime.MinValue;
+        if (_awaitingHandsFreeSecondTap)
+        {
+            _hotkeyReleaseTimer.Stop();
+            _awaitingHandsFreeSecondTap = false;
+            _isHandsFreeDictationLocked = true;
+            DictationStatus = "Hands-free dictation active";
+            _toastNotificationService.Show("Hands-free on", "Tap the shortcut again to stop", ToastState.Success, 1800);
+        }
+
         return;
     }
-    var now = DateTime.UtcNow;
-    if (now - _lastHotkeyTapUtc <= TimeSpan.FromMilliseconds(520))
-    {
-        _lastHotkeyTapUtc = DateTime.MinValue;
-        await StartHotkeyDictationAsync();
-        return;
-    }
-    _lastHotkeyTapUtc = now;
-    DictationStatus = "Tap again to start hands-free dictation";
-    _toastNotificationService.Show("Tap again", "Double-tap shortcut to start", ToastState.Success, 1300);
+
+    ResetHotkeyDictationState();
+    await StartHotkeyDictationAsync();
 }
 private async Task HandleHotkeyUpAsync()
 {
-    if (EnableDoubleTapDictation)
+    if (!EnableDoubleTapDictation)
+    {
+        await StopDictationAsync();
+        return;
+    }
+
+    if (!_dictationCoordinator.IsRecording || _dictationCoordinator.IsBusy || _isHandsFreeDictationLocked)
     {
         return;
     }
-    await StopDictationAsync();
+
+    _awaitingHandsFreeSecondTap = true;
+    _hotkeyReleaseTimer.Stop();
+    _hotkeyReleaseTimer.Start();
 }
 private async Task StartDictationAsync(bool shouldPasteToActiveApp)
 {
@@ -1137,6 +1238,9 @@ private async Task StopDictationAsync()
     {
         return;
     }
+
+    ResetHotkeyDictationState();
+
     TranscriptionResult result;
     try
     {
@@ -1228,11 +1332,29 @@ private async Task CancelActiveRecordingFromIndicatorAsync()
             return;
         }
         await _dictationCoordinator.CancelAsync();
+        ResetHotkeyDictationState();
         _pasteTargetWindow = IntPtr.Zero;
         _shouldPasteToActiveApp = false;
         DictationStatus = "Dictation cancelled";
         _toastNotificationService.ShowIdle(SelectedHotkey);
     });
+}
+private async void HotkeyReleaseTimer_Tick(object? sender, EventArgs e)
+{
+    _hotkeyReleaseTimer.Stop();
+    if (!_awaitingHandsFreeSecondTap || _isHandsFreeDictationLocked)
+    {
+        return;
+    }
+
+    _awaitingHandsFreeSecondTap = false;
+    await StopDictationAsync();
+}
+private void ResetHotkeyDictationState()
+{
+    _hotkeyReleaseTimer.Stop();
+    _awaitingHandsFreeSecondTap = false;
+    _isHandsFreeDictationLocked = false;
 }
 private async void TestMic_Click(object sender, RoutedEventArgs e)
 {
@@ -2114,7 +2236,7 @@ private void OpenLogs_Click(object sender, RoutedEventArgs e)
 private void CheckForUpdates_Click(object sender, RoutedEventArgs e)
 {
     DictationStatus = "Opening release page";
-    OpenExternalUrl("https://github.com/pHequals7/muesli/releases", "Could not open release page");
+    OpenExternalUrl("https://github.com/Muesli-HQ/Muesli-Windows/releases", "Could not open release page");
 }
 private void Donate_Click(object sender, RoutedEventArgs e)
 {
@@ -2122,7 +2244,7 @@ private void Donate_Click(object sender, RoutedEventArgs e)
 }
 private void ViewGitHub_Click(object sender, RoutedEventArgs e)
 {
-    OpenExternalUrl("https://github.com/pHequals7/muesli", "Could not open GitHub");
+    OpenExternalUrl("https://github.com/Muesli-HQ/Muesli-Windows", "Could not open GitHub");
 }
 private void OpenExternalUrl(string url, string failurePrefix)
 {
@@ -3092,50 +3214,95 @@ private async Task RefreshRuntimeDiagnosticsAsync()
         RuntimeDiagnostics = diagnostics.Summary;
         ModelCacheDirectory = diagnostics.ModelCacheDirectory;
         ModelCacheSize = diagnostics.ModelCacheSize;
-        DiarizationDependencyStatus = diagnostics.DiarizationDependencyStatus;
-        DiarizationTokenStatus = diagnostics.DiarizationTokenStatus;
-        SetupReadiness = BuildSetupReadiness(diagnostics);
+        ApplyRuntimeDiagnostics(diagnostics);
         _logService.Info($"Runtime diagnostics refreshed. {SetupReadiness.Replace(Environment.NewLine, " | ")}");
+        _logService.Info($"Runtime diagnostics details. {diagnostics.Summary.Replace(Environment.NewLine, " | ")}");
     }
     catch (Exception exception)
     {
         RuntimeDiagnostics = $"Diagnostics failed: {exception.Message}";
         SetupReadiness = "Setup check failed. Open logs for details.";
+        TranscriptionWorkerStatus = "Needs setup";
+        WhisperRuntimeStatus = "Needs setup";
+        SelectedModelCacheStatus = "Not downloaded";
+        SpeakerDiarizationStatusLabel = "Optional setup needed";
+        GpuRuntimeStatus = "CPU mode";
+        QwenRuntimeStatus = "Optional, not installed";
+        ParakeetRuntimeStatus = "Optional, not installed";
+        DiarizationDependencyStatus = "Optional setup needed";
+        DiarizationTokenStatus = "Optional if model access fails";
         _logService.Error("Runtime diagnostics failed.", exception);
     }
 }
+private void ApplyRuntimeDiagnostics(RuntimeDiagnostics diagnostics)
+{
+    var workerOk = File.Exists(diagnostics.WorkerScript);
+    var whisperOk = HasReadySignal(diagnostics.DependencyStatus);
+    var qwenOk = HasReadySignal(diagnostics.PostProcessingDependencyStatus);
+    var parakeetOk = HasReadySignal(diagnostics.ParakeetDependencyStatus);
+    var diarizationOk = HasReadySignal(diagnostics.DiarizationDependencyStatus);
+    var selectedModelCached = SelectedAsrEngine != "whisper" || _runtimeDiagnosticsService.IsWhisperModelCached(SelectedModelProfile);
+    var hasHfToken = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HF_TOKEN"));
+
+    TranscriptionWorkerStatus = workerOk ? "Ready" : "Needs setup";
+    WhisperRuntimeStatus = whisperOk ? "Ready" : "Needs setup";
+    SelectedModelCacheStatus = selectedModelCached ? "Cached" : "Not downloaded";
+    SpeakerDiarizationStatusLabel = diarizationOk ? "Ready" : "Optional setup needed";
+    GpuRuntimeStatus = diagnostics.CudaStatus.Contains("CUDA available", StringComparison.OrdinalIgnoreCase) ? "CUDA available" : "CPU mode";
+    QwenRuntimeStatus = qwenOk ? "Ready" : "Optional, not installed";
+    ParakeetRuntimeStatus = parakeetOk ? "Ready" : "Optional, not installed";
+    DiarizationDependencyStatus = SpeakerDiarizationStatusLabel;
+    DiarizationTokenStatus = hasHfToken ? "Configured" : "Optional if model access fails";
+    SetupReadiness = BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk);
+}
 private string BuildSetupReadiness(RuntimeDiagnostics diagnostics)
 {
-    var lines = new List<string>();
-    var dependenciesOk = diagnostics.DependencyStatus.Contains("OK", StringComparison.OrdinalIgnoreCase);
-    var qwenOk = diagnostics.PostProcessingDependencyStatus.Contains("OK", StringComparison.OrdinalIgnoreCase);
-    var parakeetOk = diagnostics.ParakeetDependencyStatus.Contains("OK", StringComparison.OrdinalIgnoreCase);
     var workerOk = File.Exists(diagnostics.WorkerScript);
+    var whisperOk = HasReadySignal(diagnostics.DependencyStatus);
     var selectedModelCached = SelectedAsrEngine != "whisper" || _runtimeDiagnosticsService.IsWhisperModelCached(SelectedModelProfile);
-    var baseCached = _runtimeDiagnosticsService.IsWhisperModelCached("base");
-    lines.Add(dependenciesOk ? "Whisper worker dependencies ready." : "Whisper dependencies missing. Run setup-worker-runtime.ps1.");
-    lines.Add(workerOk ? "Transcription worker found." : "Transcription worker missing from this build.");
-    lines.Add(selectedModelCached
-        ? $"{SelectedModelProfile} model cached."
-        : $"{SelectedModelProfile} model is not cached yet. Use Download selected before first offline use.");
-    if (!baseCached)
+    var diarizationOk = HasReadySignal(diagnostics.DiarizationDependencyStatus);
+    return BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk);
+}
+private string BuildSetupReadiness(bool workerOk, bool whisperOk, bool selectedModelCached, bool diarizationOk)
+{
+    var lines = new List<string>();
+    if (workerOk && whisperOk)
     {
-        lines.Add("Recommended: cache Whisper base for reliable CPU fallback.");
+        lines.Add("Core transcription is ready.");
     }
-    lines.Add(diagnostics.CudaStatus.Contains("CUDA available", StringComparison.OrdinalIgnoreCase)
-        ? "CUDA backend available."
-        : "CUDA not available; CPU transcription will be used.");
-    lines.Add(qwenOk ? "Qwen cleanup dependencies ready." : "Qwen cleanup dependencies missing; install with -WithPostProcessing if cleanup is needed.");
-    lines.Add(parakeetOk ? "Parakeet dependencies ready." : "Parakeet dependencies missing; install with -WithParakeet on NVIDIA machines.");
-    var diarizationOk = diagnostics.DiarizationDependencyStatus.Contains("OK", StringComparison.OrdinalIgnoreCase);
-    lines.Add(diarizationOk ? "Speaker diarization dependencies ready." : "Speaker diarization dependencies missing; install with -WithDiarization for Speaker 1/2 labels.");
+    else
+    {
+        lines.Add("Local transcription setup still needs attention.");
+    }
+
+    lines.Add(selectedModelCached
+        ? $"Whisper {SelectedModelProfile} is already cached for offline use."
+        : $"Download Whisper {SelectedModelProfile} before relying on offline transcription.");
+
+    if (!diarizationOk)
+    {
+        lines.Add("Speaker diarization is optional and still needs its extra runtime setup.");
+    }
+
     return string.Join(Environment.NewLine, lines);
+}
+private static bool HasReadySignal(string status)
+{
+    if (string.IsNullOrWhiteSpace(status))
+    {
+        return false;
+    }
+
+    return status.Contains("OK", StringComparison.OrdinalIgnoreCase) ||
+           status.Contains("ready", StringComparison.OrdinalIgnoreCase) ||
+           status.Contains("installed", StringComparison.OrdinalIgnoreCase);
 }
 private MuesliSettings CurrentSettingsSnapshot()
 {
     return new MuesliSettings
     {
         Hotkey = SelectedHotkey,
+        UserName = UserName,
         AsrEngine = SelectedAsrEngine,
         ModelProfile = SelectedModelProfile,
         PasteBehavior = SelectedPasteBehavior,
@@ -3536,7 +3703,17 @@ public sealed record DictationItem(
     string Time,
     string Text,
     string ModelProfile,
-    int DurationMs);
+    int DurationMs)
+{
+    private DateTime LocalTimestamp => Timestamp.Kind == DateTimeKind.Utc ? Timestamp.ToLocalTime() : Timestamp;
+
+    public string DateGroupLabel => LocalTimestamp.Date switch
+    {
+        var date when date == DateTime.Today => "TODAY",
+        var date when date == DateTime.Today.AddDays(-1) => "YESTERDAY",
+        _ => LocalTimestamp.ToString("MMMM d, yyyy")
+    };
+}
 
 public sealed record MeetingItem(
     string Id,

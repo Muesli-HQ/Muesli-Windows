@@ -44,6 +44,7 @@ public sealed class SettingsStore
 
 public sealed record MuesliSettings
 {
+    public string UserName { get; init; } = "";
     public string Hotkey { get; init; } = "F8";
     public string AsrEngine { get; init; } = "whisper";
     public string ModelProfile { get; init; } = "base";

@@ -1,6 +1,6 @@
-# Muesli for Windows
+# Muesli Windows
 
-A native Windows clone of [Muesli](https://github.com/pHequals7/muesli) — a local-first, privacy-focused dictation and meeting transcription app.
+The native Windows app for Muesli — a local-first, privacy-focused dictation and meeting transcription tool.
 
 ## What is Muesli?
 
@@ -137,11 +137,11 @@ Contributions welcome! Priority areas:
 - GPU path testing on diverse NVIDIA hardware
 - Bundling Python into the app for zero-dependency installs
 
-Open an issue or PR at [github.com/Mvkd108/Muesli](https://github.com/Mvkd108/Muesli).
+Open an issue or PR at [github.com/Muesli-HQ/Muesli-Windows](https://github.com/Muesli-HQ/Muesli-Windows).
 
 ## Acknowledgements
 
-Muesli Windows is a native clone of the original [Muesli](https://github.com/pHequals7/muesli) macOS app by [pHequals7](https://github.com/pHequals7). The macOS version remains the design and behavior mandate.
+Muesli is developed across native platform apps in the Muesli organization. The Windows app follows the same product direction and design language as the macOS app.
 
 Built with:
 - [Whisper](https://github.com/openai/whisper) by OpenAI
