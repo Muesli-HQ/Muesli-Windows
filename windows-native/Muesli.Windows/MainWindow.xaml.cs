@@ -2531,7 +2531,9 @@ private async void TestParakeet_Click(object sender, RoutedEventArgs e)
     {
         DictationStatus = $"Parakeet test failed: {exception.Message}";
         _logService.Error("Parakeet readiness test failed.", exception);
-        _toastNotificationService.Show("Parakeet unavailable", exception.Message, ToastState.Error, 6200);
+        var noNvidia = exception.Message.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase);
+        var toastTitle = noNvidia ? "Parakeet needs an NVIDIA GPU" : "Parakeet unavailable";
+        _toastNotificationService.Show(toastTitle, exception.Message, ToastState.Error, 6200);
     }
 }
 private async void DownloadQwenModel_Click(object sender, RoutedEventArgs e)
@@ -3467,8 +3469,11 @@ private void ApplyRuntimeDiagnostics(RuntimeDiagnostics diagnostics)
     SelectedModelCacheStatus = selectedModelCached ? "Cached" : "Not downloaded";
     SpeakerDiarizationStatusLabel = diarizationOk ? "Ready" : "Optional setup needed";
     GpuRuntimeStatus = diagnostics.CudaStatus.Contains("CUDA available", StringComparison.OrdinalIgnoreCase) ? "CUDA available" : "CPU mode";
+    var noNvidiaGpu = diagnostics.CudaStatus.Contains("CUDA not available", StringComparison.OrdinalIgnoreCase);
     QwenRuntimeStatus = qwenOk ? "Ready" : "Optional, not installed";
-    ParakeetRuntimeStatus = parakeetOk ? "Ready" : "Optional, not installed";
+    ParakeetRuntimeStatus = parakeetOk
+        ? "Ready"
+        : noNvidiaGpu ? "Requires NVIDIA GPU" : "Optional, not installed";
     DiarizationDependencyStatus = SpeakerDiarizationStatusLabel;
     DiarizationTokenStatus = hasHfToken ? "Configured" : "Optional if model access fails";
     CanInstallLocalRuntime = !hasPythonOverride && setupScriptAvailable && workerAssetsPresent && (!workerOk || !whisperOk);
