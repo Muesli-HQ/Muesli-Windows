@@ -2,12 +2,17 @@ name: Release package
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Attach the build to a draft GitHub Release"
+        type: boolean
+        default: true
 
 jobs:
   package:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write
     env:
       DOTNET_NOLOGO: "true"
       DOTNET_CLI_TELEMETRY_OPTOUT: "true"
@@ -37,15 +42,24 @@ jobs:
         shell: pwsh
         run: .\scripts\test-windows-package.ps1 -SkipLaunch
 
-      - name: Upload zip artifact
+      - name: Read app version from csproj
+        id: version
+        shell: pwsh
+        run: |
+          $csproj = [xml](Get-Content .\windows-native\Muesli.Windows\Muesli.Windows.csproj)
+          $version = $csproj.Project.PropertyGroup.Version
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "Could not read <Version> from csproj." }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload publish folder (contributor build)
         uses: actions/upload-artifact@v4
         with:
           name: muesli-windows-v1-win-x64
-          path: artifacts/muesli-windows-v1-win-x64.zip
+          path: publish/muesli-windows-win-x64/**
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload Velopack artifacts
+      - name: Upload Velopack artifacts (backup)
         uses: actions/upload-artifact@v4
         with:
           name: muesli-windows-velopack
@@ -55,3 +69,18 @@ jobs:
             artifacts/velopack/releases.win.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Attach to draft GitHub Release
+        if: ${{ inputs.publish_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Muesli v${{ steps.version.outputs.version }}
+          draft: true
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            artifacts/velopack/Muesli-win-Setup.exe
+            artifacts/velopack/*.nupkg
+            artifacts/velopack/releases.win.json
+            artifacts/muesli-windows-v1-win-x64.zip
