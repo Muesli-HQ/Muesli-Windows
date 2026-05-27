@@ -24,7 +24,6 @@ ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Tasks]
-Name: "setupworker"; Description: "Install local transcription runtime"; GroupDescription: "Runtime setup:"; Flags: checkedonce
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 Name: "startatlogin"; Description: "Start Muesli when I sign in"; GroupDescription: "Startup:"; Flags: unchecked
 
@@ -36,7 +35,6 @@ Name: "{group}\Muesli"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\Muesli"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\setup-worker-runtime.ps1"""; StatusMsg: "Installing local transcription runtime..."; Tasks: setupworker; Flags: runhidden
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Muesli"; Flags: nowait postinstall skipifsilent
 
 [Registry]
@@ -44,3 +42,4 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.venv"
+Type: filesandordirs; Name: "{app}\python"

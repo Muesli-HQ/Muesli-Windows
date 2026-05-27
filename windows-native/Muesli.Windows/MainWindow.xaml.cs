@@ -114,6 +114,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isInstallingLocalRuntime;
     private double? _indicatorLeft;
     private double? _indicatorTop;
+    private bool _crashReportingEnabled;
+    private bool _crashReportingPromptShown;
+    private bool _crashReportingStartupValue;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -717,6 +720,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _autoMeetingDetectionEnabled = settings.AutoMeetingDetectionEnabled;
         _indicatorLeft = settings.IndicatorLeft;
         _indicatorTop = settings.IndicatorTop;
+        _crashReportingEnabled = settings.CrashReportingEnabled;
+        _crashReportingPromptShown = settings.CrashReportingPromptShown;
+        _crashReportingStartupValue = _crashReportingEnabled;
         _toastNotificationService.SetSavedPosition(_indicatorLeft, _indicatorTop);
         _toastNotificationService.SetIndicatorAnchor(_selectedIndicatorPosition, clearCustomPosition: false);
         _toastNotificationService.SetIdleIndicatorVisible(_showFloatingIndicator, showNow: false);
@@ -933,6 +939,16 @@ private void ShowOnboardingIfNeeded()
         Style = (Style)FindResource("MuesliCheckBox")
     };
     body.Children.Add(BuildOnboardingRow("Floating indicator", "Mirrors the OG app's small dictation pill.", indicatorCheck));
+    var crashCheck = new System.Windows.Controls.CheckBox
+    {
+        Content = "Send anonymous crash reports",
+        IsChecked = _crashReportingEnabled,
+        Style = (Style)FindResource("MuesliCheckBox")
+    };
+    body.Children.Add(BuildOnboardingRow(
+        "Crash reporting",
+        "Helps fix bugs faster. Only stack traces and app version are sent — never your transcripts, meeting recordings, or settings. You can change this in About → Privacy.",
+        crashCheck));
     var readinessText = new WpfTextBox
     {
         Text = SetupReadiness,
@@ -1020,12 +1036,19 @@ private void ShowOnboardingIfNeeded()
         SelectedHotkey = hotkeyCombo.SelectedItem as string ?? SelectedHotkey;
         StartAtLogin = startupCheck.IsChecked == true;
         ShowFloatingIndicator = indicatorCheck.IsChecked == true;
+        _crashReportingEnabled = crashCheck.IsChecked == true;
+        _crashReportingStartupValue = _crashReportingEnabled;
+        _crashReportingPromptShown = true;
+        OnPropertyChanged(nameof(CrashReportingEnabled));
+        OnPropertyChanged(nameof(CrashReportingRestartHintVisible));
         _onboardingCompleted = true;
         SaveSettings();
         window.Close();
+        _ = EnsureBaseModelDownloadedAsync();
     };
     skip.Click += (_, _) =>
     {
+        _crashReportingPromptShown = true;
         _onboardingCompleted = true;
         SaveSettings();
         window.Close();
@@ -2505,6 +2528,32 @@ private async void DownloadWhisperModel_Click(object sender, RoutedEventArgs e)
         _toastNotificationService.Show("Model download failed", exception.Message, ToastState.Error, 5200);
     }
 }
+private async Task EnsureBaseModelDownloadedAsync()
+{
+    if (string.Equals(Environment.GetEnvironmentVariable("MUESLI_SKIP_AUTODOWNLOAD"), "1", StringComparison.Ordinal))
+    {
+        return;
+    }
+    if (_runtimeDiagnosticsService.IsWhisperModelCached("base"))
+    {
+        return;
+    }
+    try
+    {
+        DictationStatus = "Downloading base model";
+        _toastNotificationService.Show("Downloading base model", "First-run setup", ToastState.Transcribing, 0);
+        var result = await _dictationCoordinator.DownloadModelAsync("whisper", "base");
+        DictationStatus = result.Text;
+        _toastNotificationService.Show("Model ready", "base", ToastState.Success, 3600);
+        await RefreshRuntimeDiagnosticsAsync();
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Base model download failed: {exception.Message}";
+        _logService.Error("Base model auto-download failed.", exception);
+        _toastNotificationService.Show("Model download failed", "Retry from Models → Download base.", ToastState.Error, 5200);
+    }
+}
 public string SetupReadiness
 {
     get => _setupReadiness;
@@ -3704,9 +3753,29 @@ private MuesliSettings CurrentSettingsSnapshot()
         Theme = _theme,
         MicrophoneName = SelectedMicrophone,
         IndicatorLeft = _indicatorLeft,
-        IndicatorTop = _indicatorTop
+        IndicatorTop = _indicatorTop,
+        CrashReportingEnabled = _crashReportingEnabled,
+        CrashReportingPromptShown = _crashReportingPromptShown
     };
 }
+
+public bool CrashReportingEnabled
+{
+    get => _crashReportingEnabled;
+    set
+    {
+        if (SetField(ref _crashReportingEnabled, value))
+        {
+            OnPropertyChanged(nameof(CrashReportingRestartHintVisible));
+            SaveSettings();
+        }
+    }
+}
+
+public System.Windows.Visibility CrashReportingRestartHintVisible =>
+    _crashReportingEnabled != _crashReportingStartupValue
+        ? System.Windows.Visibility.Visible
+        : System.Windows.Visibility.Collapsed;
 private void OnIndicatorPositionChanged(object? sender, IndicatorPositionChangedEventArgs e)
 {
     _indicatorLeft = e.Left;

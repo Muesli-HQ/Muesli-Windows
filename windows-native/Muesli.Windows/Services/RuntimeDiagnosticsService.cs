@@ -177,6 +177,7 @@ public sealed class RuntimeDiagnosticsService
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            WorkerRuntimeLocator.ApplyWorkerEnv(startInfo, fileName);
 
             using var process = Process.Start(startInfo);
             if (process is null)

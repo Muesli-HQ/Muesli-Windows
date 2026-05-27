@@ -227,6 +227,7 @@ public sealed class TranscriptionWorkerClient : IDisposable
             CreateNoWindow = true,
             WorkingDirectory = Path.GetDirectoryName(script) ?? AppContext.BaseDirectory
         };
+        WorkerRuntimeLocator.ApplyWorkerEnv(startInfo, python);
         startInfo.ArgumentList.Add(script);
         startInfo.ArgumentList.Add("server");
 

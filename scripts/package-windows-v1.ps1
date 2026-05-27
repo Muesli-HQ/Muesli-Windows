@@ -1,9 +1,14 @@
 param(
     [string]$Configuration = "Release",
-    [string]$Runtime = "win-x64"
+    [string]$Runtime = "win-x64",
+    [string]$SentryDsn = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($SentryDsn) -and -not [string]::IsNullOrWhiteSpace($env:SENTRY_DSN)) {
+    $SentryDsn = $env:SENTRY_DSN
+}
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $project = Join-Path $root "windows-native\Muesli.Windows\Muesli.Windows.csproj"
@@ -33,13 +38,21 @@ if (Test-Path $publishDir) {
 New-Item -ItemType Directory -Force -Path $publishDir | Out-Null
 New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
 
-dotnet publish $project `
-    -c $Configuration `
-    -r $Runtime `
-    --self-contained true `
-    -p:PublishSingleFile=false `
-    -p:PublishReadyToRun=true `
-    -o $publishDir
+$publishArgs = @(
+    $project,
+    "-c", $Configuration,
+    "-r", $Runtime,
+    "--self-contained", "true",
+    "-p:PublishSingleFile=false",
+    "-p:PublishReadyToRun=true",
+    "-o", $publishDir
+)
+if (-not [string]::IsNullOrWhiteSpace($SentryDsn)) {
+    $publishArgs += "-p:SentryDsn=$SentryDsn"
+    Write-Host "Embedding Sentry DSN into release build."
+}
+dotnet publish @publishArgs
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit $LASTEXITCODE." }
 
 $satelliteCultureDirs = @(
     "cs", "de", "es", "fr", "it", "ja", "ko", "pl", "pt-BR", "ru", "tr", "zh-Hans", "zh-Hant"
@@ -57,6 +70,30 @@ Get-ChildItem -LiteralPath $publishDir -File -Recurse -ErrorAction SilentlyConti
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
+& (Join-Path $PSScriptRoot "fetch-python-runtime.ps1") -DestinationParent $publishDir
+if ($LASTEXITCODE -ne 0) {
+    throw "fetch-python-runtime.ps1 exited with code $LASTEXITCODE"
+}
+
+$bundledPython = Join-Path $publishDir "python\python.exe"
+$siteTarget = Join-Path $publishDir "python\site-packages-muesli"
+$workerRequirements = Join-Path $publishDir "worker\requirements.txt"
+if (-not (Test-Path $workerRequirements)) {
+    throw "Worker requirements file missing at $workerRequirements after publish."
+}
+
+New-Item -ItemType Directory -Force -Path $siteTarget | Out-Null
+& $bundledPython -m pip install --upgrade pip --no-warn-script-location
+if ($LASTEXITCODE -ne 0) { throw "Bundled pip self-upgrade failed (exit $LASTEXITCODE)." }
+& $bundledPython -m pip install --no-warn-script-location --target $siteTarget -r $workerRequirements
+if ($LASTEXITCODE -ne 0) { throw "Bundled pip install of worker requirements failed (exit $LASTEXITCODE)." }
+
+Get-ChildItem -LiteralPath $siteTarget -Directory -Recurse -Filter "__pycache__" -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force
+Get-ChildItem -LiteralPath $siteTarget -File -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
+    Remove-Item -Force
+
 $readme = @"
 Muesli for Windows v1
 =====================
@@ -67,23 +104,24 @@ Run:
 Install:
   powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
   Optional:
-    powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -WithPostProcessing -StartAtLogin
-    powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -WithParakeet
+    powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -StartAtLogin
 
 Current v1 requirements:
   - Windows x64.
-  - Python 3.11 or 3.12 available through `py`, `python`, or `python3` for first-time setup.
-  - Verify Python/runtime compatibility without installing packages:
-      powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1 -CheckOnly
+  - No system Python required. A bundled CPython 3.12 runtime ships in this folder
+    under `python\`, with base Whisper worker dependencies pre-installed in
+    `python\site-packages-muesli`.
   - Verify the extracted/installed package shape:
       powershell -ExecutionPolicy Bypass -File .\fresh-machine-qa.ps1
-  - Run setup-worker-runtime.ps1 once from this folder to create a local .venv beside Muesli.exe:
-      powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1
-  - Optional Qwen post-processing dependencies, only needed if transcript cleanup is enabled:
+
+Optional add-ons (download extra dependencies into the bundled runtime):
+  - Qwen transcript cleanup:
       powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1 -WithPostProcessing
       set MUESLI_ALLOW_MODEL_DOWNLOAD=1 for the first Qwen model download, or preinstall the model in `%USERPROFILE%\.cache\muesli`.
-  - Optional NVIDIA Parakeet backend dependencies, only for CUDA/NVIDIA machines:
+  - NVIDIA Parakeet backend (CUDA/NVIDIA machines):
       powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1 -WithParakeet
+  - Speaker diarization (pyannote):
+      powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1 -WithDiarization
 
 Default shortcut:
   Hold the configured shortcut to dictate. Release it to transcribe and paste into the previously focused app.

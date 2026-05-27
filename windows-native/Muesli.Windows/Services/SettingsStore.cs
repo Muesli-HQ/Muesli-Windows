@@ -71,4 +71,6 @@ public sealed record MuesliSettings
     public string? MicrophoneName { get; init; }
     public double? IndicatorLeft { get; init; }
     public double? IndicatorTop { get; init; }
+    public bool CrashReportingEnabled { get; init; }
+    public bool CrashReportingPromptShown { get; init; }
 }

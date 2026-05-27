@@ -1,0 +1,43 @@
+name: Release package
+
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore .\windows-native\Muesli.Windows\Muesli.Windows.csproj
+
+      - name: Build, fetch bundled Python, package zip
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        shell: pwsh
+        run: .\scripts\package-windows-v1.ps1
+
+      - name: Smoke test packaged zip
+        shell: pwsh
+        run: .\scripts\test-windows-package.ps1 -SkipLaunch
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: muesli-windows-v1-win-x64
+          path: artifacts/muesli-windows-v1-win-x64.zip
+          if-no-files-found: error
+          retention-days: 30

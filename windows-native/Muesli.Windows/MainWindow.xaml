@@ -1637,6 +1637,24 @@
             </StackPanel>
           </Border>
 
+          <TextBlock Text="PRIVACY" Style="{StaticResource SectionLabel}" />
+          <Border Style="{StaticResource ContentCard}">
+            <StackPanel>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Send anonymous crash reports" Style="{StaticResource SettingsRowLabel}" />
+                  <TextBlock Text="Helps fix bugs faster. Only stack traces and app version are sent — never your transcripts, meeting recordings, or settings." Margin="0,4,0,0" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <CheckBox Grid.Column="1" Style="{StaticResource MuesliCheckBox}" IsChecked="{Binding CrashReportingEnabled}" VerticalAlignment="Center" />
+              </Grid>
+              <TextBlock Text="Restart Muesli to apply." Margin="0,8,0,0" FontSize="12" Foreground="{DynamicResource WarningOrangeBrush}" Visibility="{Binding CrashReportingRestartHintVisible}" />
+            </StackPanel>
+          </Border>
+
           <TextBlock Text="SUPPORT" Style="{StaticResource SectionLabel}" />
           <Border Style="{StaticResource ContentCard}">
             <StackPanel>

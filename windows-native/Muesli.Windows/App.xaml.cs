@@ -1,8 +1,11 @@
+using System.Reflection;
+
 namespace Muesli.Windows;
 
 public partial class App : System.Windows.Application
 {
     private readonly Services.AppLogService _logService = new();
+    private IDisposable? _sentryDisposable;
 
     public static bool StartedInBackground
     {
@@ -35,6 +38,9 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         _logService.Info($"Muesli starting. Background={StartedInBackground}. Version={Environment.Version}.");
+        var pythonPath = Services.WorkerRuntimeLocator.FindPythonExecutable();
+        _logService.Info($"Worker python resolved via '{Services.WorkerRuntimeLocator.LastResolutionSource}': {pythonPath}");
+
         if (Services.StartupRegistrationService.IsEnabled() &&
             !Services.StartupRegistrationService.IsRegisteredForBackgroundLaunch())
         {
@@ -49,9 +55,12 @@ public partial class App : System.Windows.Application
             }
         }
 
+        TryInitializeSentry();
+
         DispatcherUnhandledException += (_, args) =>
         {
             _logService.Error("Unhandled UI exception.", args.Exception);
+            Sentry.SentrySdk.CaptureException(args.Exception);
             args.Handled = true;
             System.Windows.MessageBox.Show(
                 "Muesli hit an unexpected error. The details were saved to the logs folder.",
@@ -65,17 +74,25 @@ public partial class App : System.Windows.Application
             if (args.ExceptionObject is Exception exception)
             {
                 _logService.Error("Unhandled app-domain exception.", exception);
+                Sentry.SentrySdk.CaptureException(exception);
             }
             else
             {
                 _logService.Error($"Unhandled app-domain exception object: {args.ExceptionObject}");
             }
+            Sentry.SentrySdk.Flush(TimeSpan.FromSeconds(2));
         };
 
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
             _logService.Error("Unobserved task exception.", args.Exception);
+            Sentry.SentrySdk.CaptureException(args.Exception);
             args.SetObserved();
+        };
+
+        Exit += (_, _) =>
+        {
+            _sentryDisposable?.Dispose();
         };
 
         var window = new MainWindow();
@@ -90,5 +107,62 @@ public partial class App : System.Windows.Application
         }
 
         window.Show();
+    }
+
+    private void TryInitializeSentry()
+    {
+        try
+        {
+            var settings = new Services.SettingsStore().Load();
+            if (!settings.CrashReportingEnabled)
+            {
+                return;
+            }
+
+            var dsn = ResolveSentryDsn();
+            if (string.IsNullOrWhiteSpace(dsn))
+            {
+                _logService.Info("Crash reporting enabled but no Sentry DSN resolved; skipping Sentry init.");
+                return;
+            }
+
+            var release = $"muesli-windows@{Assembly.GetExecutingAssembly().GetName().Version}";
+            _sentryDisposable = Sentry.SentrySdk.Init(options =>
+            {
+                options.Dsn = dsn;
+                options.AutoSessionTracking = true;
+                options.SendDefaultPii = false;
+                options.Release = release;
+                options.Environment =
+#if DEBUG
+                    "dev";
+#else
+                    "prod";
+#endif
+                options.MaxBreadcrumbs = 50;
+                options.SetBeforeSend(Services.SentryScrubber.Scrub);
+                options.SetBeforeBreadcrumb(Services.SentryScrubber.ScrubBreadcrumb);
+            });
+            _logService.Info("Sentry crash reporting initialized.");
+        }
+        catch (Exception exception)
+        {
+            _logService.Error("Sentry initialization failed.", exception);
+        }
+    }
+
+    private static string? ResolveSentryDsn()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("MUESLI_SENTRY_DSN");
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+        {
+            return fromEnv;
+        }
+
+        var embedded = Assembly.GetExecutingAssembly()
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => string.Equals(a.Key, "SentryDsn", StringComparison.Ordinal))
+            ?.Value;
+        return string.IsNullOrWhiteSpace(embedded) ? null : embedded;
     }
 }
