@@ -24,7 +24,10 @@ jobs:
       - name: Restore
         run: dotnet restore .\windows-native\Muesli.Windows\Muesli.Windows.csproj
 
-      - name: Build, fetch bundled Python, package zip
+      - name: Install vpk CLI
+        run: dotnet tool install -g vpk
+
+      - name: Build, fetch bundled Python, package zip + Velopack Setup.exe
         env:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         shell: pwsh
@@ -39,5 +42,16 @@ jobs:
         with:
           name: muesli-windows-v1-win-x64
           path: artifacts/muesli-windows-v1-win-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Velopack artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: muesli-windows-velopack
+          path: |
+            artifacts/velopack/Muesli-win-Setup.exe
+            artifacts/velopack/*.nupkg
+            artifacts/velopack/releases.win.json
           if-no-files-found: error
           retention-days: 30

@@ -11,6 +11,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Win32;
 using Muesli.Windows.Services;
+using Velopack;
+using Velopack.Sources;
 using WpfButton = System.Windows.Controls.Button;
 using WpfListBox = System.Windows.Controls.ListBox;
 using WpfOrientation = System.Windows.Controls.Orientation;
@@ -117,6 +119,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _crashReportingEnabled;
     private bool _crashReportingPromptShown;
     private bool _crashReportingStartupValue;
+    private UpdateManager? _updateManager;
+    private UpdateInfo? _pendingUpdate;
+    private bool _isUpdateReady;
+    private bool _updateCheckInFlight;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -802,6 +808,7 @@ public void StartRuntime(bool showOnboarding)
         ShowOnboardingIfNeeded();
     }
     _ = RefreshRuntimeDiagnosticsAsync();
+    StartBackgroundUpdateCheck();
 }
 public void SetBackgroundStatus()
 {
@@ -2457,10 +2464,156 @@ private void OpenLogs_Click(object sender, RoutedEventArgs e)
         DictationStatus = $"Could not open logs: {exception.Message}";
     }
 }
-private void CheckForUpdates_Click(object sender, RoutedEventArgs e)
+private async void CheckForUpdates_Click(object sender, RoutedEventArgs e)
 {
-    DictationStatus = "Opening release page";
-    OpenExternalUrl("https://github.com/Muesli-HQ/Muesli-Windows/releases", "Could not open release page");
+    if (_isUpdateReady && _pendingUpdate is not null)
+    {
+        await ApplyPendingUpdateAsync(manualPrompt: true);
+        return;
+    }
+
+    var manager = EnsureUpdateManager();
+    if (manager is null || !manager.IsInstalled)
+    {
+        DictationStatus = "Opening release page";
+        OpenExternalUrl("https://github.com/Muesli-HQ/Muesli-Windows/releases", "Could not open release page");
+        return;
+    }
+
+    if (_updateCheckInFlight)
+    {
+        return;
+    }
+
+    _updateCheckInFlight = true;
+    try
+    {
+        DictationStatus = "Checking for updates";
+        _toastNotificationService.Show("Checking for updates", "Contacting GitHub", ToastState.Transcribing, 0);
+        var info = await manager.CheckForUpdatesAsync();
+        if (info is null)
+        {
+            DictationStatus = "Muesli is up to date";
+            _toastNotificationService.Show("Up to date", "You're on the latest release.", ToastState.Success, 3600);
+            return;
+        }
+
+        _toastNotificationService.Show("Downloading update", info.TargetFullRelease.Version.ToString(), ToastState.Transcribing, 0);
+        await manager.DownloadUpdatesAsync(info);
+        _pendingUpdate = info;
+        IsUpdateReady = true;
+        _toastNotificationService.Show("Update ready", "Click 'Restart and update' to apply.", ToastState.Success, 4200);
+        await ApplyPendingUpdateAsync(manualPrompt: true);
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Update check failed: {exception.Message}";
+        _logService.Error("Update check failed.", exception);
+        _toastNotificationService.Show("Update check failed", exception.Message, ToastState.Error, 5200);
+    }
+    finally
+    {
+        _updateCheckInFlight = false;
+    }
+}
+
+public bool IsUpdateReady
+{
+    get => _isUpdateReady;
+    private set
+    {
+        if (SetField(ref _isUpdateReady, value))
+        {
+            OnPropertyChanged(nameof(UpdateButtonLabel));
+        }
+    }
+}
+
+public string UpdateButtonLabel => _isUpdateReady ? "Restart and update" : "Check Now";
+
+private UpdateManager? EnsureUpdateManager()
+{
+    if (_updateManager is not null)
+    {
+        return _updateManager;
+    }
+    try
+    {
+        var source = new GithubSource("https://github.com/Muesli-HQ/Muesli-Windows", null, false);
+        _updateManager = new UpdateManager(source);
+        return _updateManager;
+    }
+    catch (Exception exception)
+    {
+        _logService.Error("Could not initialize update manager.", exception);
+        return null;
+    }
+}
+
+private void StartBackgroundUpdateCheck()
+{
+    if (_updateCheckInFlight) return;
+    var manager = EnsureUpdateManager();
+    if (manager is null || !manager.IsInstalled) return;
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            var info = await manager.CheckForUpdatesAsync();
+            if (info is null) return;
+            await manager.DownloadUpdatesAsync(info);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _pendingUpdate = info;
+                IsUpdateReady = true;
+                _toastNotificationService.Show("Update ready",
+                    $"v{info.TargetFullRelease.Version} is ready. Restart Muesli to apply.",
+                    ToastState.Success, 5200);
+            });
+        }
+        catch (Exception exception)
+        {
+            _logService.Error("Background update check failed.", exception);
+        }
+    });
+}
+
+private Task ApplyPendingUpdateAsync(bool manualPrompt)
+{
+    if (_pendingUpdate is null) return Task.CompletedTask;
+    if (_updateManager is null) return Task.CompletedTask;
+
+    if (_meetingRecordingCoordinator.IsRecording || _dictationCoordinator.IsBusy)
+    {
+        if (manualPrompt)
+        {
+            _toastNotificationService.Show("Update deferred",
+                "Stop the active recording or dictation first.", ToastState.Error, 4200);
+        }
+        return Task.CompletedTask;
+    }
+
+    if (manualPrompt)
+    {
+        var version = _pendingUpdate.TargetFullRelease.Version.ToString();
+        var result = System.Windows.MessageBox.Show(
+            $"Restart Muesli now to install v{version}?",
+            "Update ready",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question);
+        if (result != System.Windows.MessageBoxResult.Yes) return Task.CompletedTask;
+    }
+
+    try
+    {
+        _updateManager.ApplyUpdatesAndRestart(_pendingUpdate);
+    }
+    catch (Exception exception)
+    {
+        _logService.Error("Apply update failed.", exception);
+        _toastNotificationService.Show("Update failed", exception.Message, ToastState.Error, 5200);
+    }
+    return Task.CompletedTask;
 }
 private void Donate_Click(object sender, RoutedEventArgs e)
 {

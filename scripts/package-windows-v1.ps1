@@ -160,13 +160,13 @@ Highlights:
   - Optional Qwen transcript cleanup.
 
 Known release requirements:
-  - Python 3.11 or 3.12 is required for first-time local worker setup.
+  - No system Python required. CPython 3.12 ships bundled in this package.
   - Qwen cleanup requires optional post-processing dependencies and a downloaded local model.
   - Parakeet requires NVIDIA/CUDA-capable hardware and optional Parakeet dependencies.
   - Installer is not code-signed until a real signing certificate is configured.
 
 Fresh-machine validation checklist:
-  1. Install using MuesliSetup-0.2.0-win-x64.exe.
+  1. Install using Muesli-win-Setup.exe from artifacts\velopack.
   2. Confirm onboarding appears once.
   3. Pick a microphone and a shortcut that is not reserved by the test laptop.
   4. Run Models > First-run Setup > Check setup.
@@ -185,12 +185,13 @@ Muesli Windows Ship Checklist
 
 Build:
   [ ] dotnet build .\windows-native\Muesli.Windows\Muesli.Windows.csproj -c Release
-  [ ] .\scripts\build-installer.ps1
+  [ ] .\scripts\package-windows-v1.ps1     (produces ZIP + Velopack Setup.exe)
   [ ] .\scripts\test-windows-package.ps1
 
 Installer / ZIP:
-  [ ] Installer launches and completes on a fresh Windows account.
+  [ ] Muesli-win-Setup.exe (Velopack) installs cleanly to %LocalAppData%\Muesli.
   [ ] ZIP extracts and smoke test launches Muesli.exe.
+  [ ] About > Check Now picks up a newer published release.
   [ ] uninstall-windows.ps1 removes shortcuts/startup registration.
   [ ] install-windows.ps1 can set StartAtLogin when requested.
 
@@ -203,7 +204,7 @@ Core dictation:
   [ ] Clipboard fallback works.
 
 Runtime / models:
-  [ ] Python 3.11/3.12 detected.
+  [ ] Bundled CPython 3.12 detected (worker python resolves via 'bundled' in logs).
   [ ] Whisper dependencies OK.
   [ ] Whisper base cached and works offline.
   [ ] tiny/base/small tested on low-end CPU.
@@ -247,3 +248,48 @@ if (Test-Path $zipPath) {
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath
 
 Write-Host "Created $zipPath"
+
+$velopackDir = Join-Path $artifactsDir "velopack"
+$velopackVersion = ([xml](Get-Content (Join-Path $root "windows-native\Muesli.Windows\Muesli.Windows.csproj"))).Project.PropertyGroup.Version
+if ([string]::IsNullOrWhiteSpace($velopackVersion)) {
+    throw "Could not read <Version> from Muesli.Windows.csproj for Velopack packaging."
+}
+
+if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) {
+    Write-Host "Installing vpk CLI globally"
+    dotnet tool install -g vpk
+    if ($LASTEXITCODE -ne 0) { throw "dotnet tool install -g vpk failed." }
+    $toolsBin = Join-Path $env:USERPROFILE ".dotnet\tools"
+    if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $toolsBin })) {
+        $env:PATH = "$toolsBin;$env:PATH"
+    }
+}
+
+New-Item -ItemType Directory -Force -Path $velopackDir | Out-Null
+try {
+    $prevManifest = Join-Path $velopackDir "releases.win.json"
+    if (Test-Path $prevManifest) { Remove-Item -LiteralPath $prevManifest -Force }
+    Invoke-WebRequest `
+        -Uri "https://github.com/Muesli-HQ/Muesli-Windows/releases/latest/download/releases.win.json" `
+        -OutFile $prevManifest -UseBasicParsing -ErrorAction Stop
+    Write-Host "Pulled previous release manifest for delta packaging."
+} catch {
+    Write-Host "No previous release manifest available; full package only."
+}
+
+$icon = Join-Path $root "windows-native\Muesli.Windows\Assets\muesli.ico"
+$packArgs = @(
+    "pack",
+    "--packId", "Muesli",
+    "--packVersion", $velopackVersion,
+    "--packDir", $publishDir,
+    "--mainExe", "Muesli.exe",
+    "--outputDir", $velopackDir,
+    "--packAuthors", "Muesli",
+    "--packTitle", "Muesli"
+)
+if (Test-Path $icon) { $packArgs += @("--icon", $icon) }
+& vpk @packArgs
+if ($LASTEXITCODE -ne 0) { throw "vpk pack failed with exit $LASTEXITCODE." }
+
+Write-Host "Velopack artifacts written to $velopackDir"

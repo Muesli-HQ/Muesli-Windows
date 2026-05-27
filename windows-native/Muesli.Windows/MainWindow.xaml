@@ -1632,7 +1632,7 @@
                   <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Check for Updates" Style="{StaticResource SettingsRowLabel}" />
-                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Check Now" Click="CheckForUpdates_Click" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="{Binding UpdateButtonLabel}" Click="CheckForUpdates_Click" />
               </Grid>
             </StackPanel>
           </Border>

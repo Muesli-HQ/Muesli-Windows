@@ -1,4 +1,5 @@
 using System.Reflection;
+using Velopack;
 
 namespace Muesli.Windows;
 
@@ -6,6 +7,15 @@ public partial class App : System.Windows.Application
 {
     private readonly Services.AppLogService _logService = new();
     private IDisposable? _sentryDisposable;
+
+    [STAThread]
+    public static void Main(string[] args)
+    {
+        VelopackApp.Build().Run();
+        var app = new App();
+        app.InitializeComponent();
+        app.Run();
+    }
 
     public static bool StartedInBackground
     {

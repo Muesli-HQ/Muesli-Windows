@@ -8,12 +8,18 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>Muesli</AssemblyName>
     <RootNamespace>Muesli.Windows</RootNamespace>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
+    <StartupObject>Muesli.Windows.App</StartupObject>
   </PropertyGroup>
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="QuestPDF" Version="2026.5.0" />
     <PackageReference Include="Sentry" Version="5.16.3" />
+    <PackageReference Include="Velopack" Version="1.0.1" />
   </ItemGroup>
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
