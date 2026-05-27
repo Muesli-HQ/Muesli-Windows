@@ -224,7 +224,12 @@ public sealed class AudioCaptureService : IDisposable
     private static void NormalizeToWhisperWav(string sourcePath, string destinationPath)
     {
         using var reader = new AudioFileReader(sourcePath);
-        var monoProvider = reader.ToMono();
+        ISampleProvider monoProvider = reader.WaveFormat.Channels switch
+        {
+            1 => reader,
+            2 => reader.ToMono(),
+            _ => new DownmixToMonoSampleProvider(reader),
+        };
         var outFormat = new WaveFormat(16000, 16, 1);
         var waveProvider = monoProvider.ToWaveProvider16();
         using var resampler = new MediaFoundationResampler(waveProvider, outFormat)
@@ -232,6 +237,47 @@ public sealed class AudioCaptureService : IDisposable
             ResamplerQuality = 60
         };
         WaveFileWriter.CreateWaveFile(destinationPath, resampler);
+    }
+
+    private sealed class DownmixToMonoSampleProvider : ISampleProvider
+    {
+        private readonly ISampleProvider _source;
+        private readonly int _channels;
+        private float[] _buffer = [];
+
+        public DownmixToMonoSampleProvider(ISampleProvider source)
+        {
+            _source = source;
+            _channels = source.WaveFormat.Channels;
+            WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(source.WaveFormat.SampleRate, 1);
+        }
+
+        public WaveFormat WaveFormat { get; }
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            var sourceSamples = count * _channels;
+            if (_buffer.Length < sourceSamples)
+            {
+                _buffer = new float[sourceSamples];
+            }
+
+            var read = _source.Read(_buffer, 0, sourceSamples);
+            var frames = read / _channels;
+            for (var i = 0; i < frames; i++)
+            {
+                float sum = 0;
+                var baseIdx = i * _channels;
+                for (var ch = 0; ch < _channels; ch++)
+                {
+                    sum += _buffer[baseIdx + ch];
+                }
+
+                buffer[offset + i] = sum / _channels;
+            }
+
+            return frames;
+        }
     }
 
     private static string CaptureDirectory()
