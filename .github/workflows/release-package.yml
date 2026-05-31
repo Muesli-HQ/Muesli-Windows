@@ -42,12 +42,6 @@ jobs:
         shell: pwsh
         run: .\scripts\test-windows-package.ps1 -SkipLaunch
 
-      - name: Print installer SHA-256
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash artifacts/velopack/Muesli-win-Setup.exe -Algorithm SHA256).Hash
-          "Muesli-win-Setup.exe SHA-256: $hash" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-
       - name: Read app version from csproj
         id: version
         shell: pwsh
