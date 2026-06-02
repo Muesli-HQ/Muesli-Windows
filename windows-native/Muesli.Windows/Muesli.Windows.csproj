@@ -10,6 +10,10 @@
     <RootNamespace>Muesli.Windows</RootNamespace>
     <Version>0.3.0</Version>
     <StartupObject>Muesli.Windows.App</StartupObject>
+    <Product>Muesli</Product>
+    <Description>Local-first dictation and meeting transcription for Windows.</Description>
+    <Copyright>Copyright (c) Muesli HQ</Copyright>
+    <Company>Muesli HQ</Company>
   </PropertyGroup>
   <ItemGroup>
     <ApplicationDefinition Remove="App.xaml" />
