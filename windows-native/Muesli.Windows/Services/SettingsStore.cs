@@ -73,4 +73,9 @@ public sealed record MuesliSettings
     public double? IndicatorTop { get; init; }
     public bool CrashReportingEnabled { get; init; }
     public bool CrashReportingPromptShown { get; init; }
+    public bool FillerWordFilterEnabled { get; init; }
+    public bool GitHubStarClicked { get; init; }
+    public bool BuyMeCoffeeClicked { get; init; }
+    public int? NextDictationWordMilestone { get; init; }
+    public int? NextMeetingMilestone { get; init; }
 }
