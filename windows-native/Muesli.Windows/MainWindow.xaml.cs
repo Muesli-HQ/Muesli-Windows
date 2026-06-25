@@ -2413,6 +2413,10 @@ private async void ImportMeeting_Click(object sender, RoutedEventArgs e)
             dialog.FileName,
             new TranscriptionOptions(SelectedAsrEngine, SelectedModelProfile));
         var transcript = DictionaryCorrectionService.Apply(result.Text, DictionaryEntries.Select(entry => entry.Record));
+        if (FillerWordFilterEnabled)
+        {
+            transcript = FillerWordFilter.Apply(transcript);
+        }
         transcript = await PostProcessIfEnabledAsync(transcript, "meeting import", _meetingTranscriptionClient.PostProcessAsync);
         if (string.IsNullOrWhiteSpace(transcript))
         {
@@ -2438,6 +2442,7 @@ private async void ImportMeeting_Click(object sender, RoutedEventArgs e)
         SaveMeetings();
         RefreshMeetingViews();
         RefreshSearchResults();
+        CheckContributionMilestone(ContributionMilestoneKind.Meetings, Meetings.Count);
         DictationStatus = "Meeting transcribed";
         _toastNotificationService.Show("Meeting ready", meeting.Title, ToastState.Success);
         ShowPage(MeetingsPage, MeetingsNav);
