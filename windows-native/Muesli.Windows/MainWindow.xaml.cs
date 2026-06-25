@@ -799,6 +799,7 @@ OnPropertyChanged(nameof(SelectedMicrophone));
     {
         _logService.Info("Main window closing.");
         _aliasSaveDebounceTimer.Stop();
+        _recordingDurationTimer.Stop();
         SaveActiveSpeakerAliases();
         _meetingAutoStopTimer.Stop();
         _meetingDetectionService.ScanCompleted -= OnMeetingDetectionScanCompleted;
@@ -1515,7 +1516,6 @@ private async Task StopDictationAsync()
         OnPropertyChanged(nameof(WordsDictatedDisplay));
         OnPropertyChanged(nameof(AverageWpm));
         RefreshSearchResults();
-        CheckContributionMilestone(ContributionMilestoneKind.DictationWords, WordsDictated);
     }
     if (textToUse.Length > 0)
     {
@@ -1540,6 +1540,7 @@ private async Task StopDictationAsync()
             _logService.Error("Active-app paste failed after successful dictation.", exception);
             _toastNotificationService.Show("Dictation ready", "Paste failed; transcript is in the app", ToastState.Error);
         }
+        CheckContributionMilestone(ContributionMilestoneKind.DictationWords, WordsDictated);
     }
     else
     {
