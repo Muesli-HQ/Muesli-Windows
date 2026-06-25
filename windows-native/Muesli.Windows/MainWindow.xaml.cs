@@ -95,6 +95,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private Dictionary<string, string> _activeSpeakerAliases = new();
     private bool _lastMeetingDetailShowTranscript = false;
     private bool _isMeetingRecording;
+    private DateTime _meetingRecordingStartTime;
+    private readonly System.Windows.Threading.DispatcherTimer _recordingDurationTimer = new()
+    {
+        Interval = TimeSpan.FromSeconds(1)
+    };
     private int _meetingMissingScanCount;
     private string? _currentMeetingTitle;
     private string _runtimeDiagnostics = "Not checked yet.";
@@ -759,6 +764,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _toastNotificationService.PositionChanged += OnIndicatorPositionChanged;
         _meetingDetectionService.ScanCompleted += OnMeetingDetectionScanCompleted;
         _meetingAutoStopTimer.Tick += MeetingAutoStopTimer_Tick;
+        _recordingDurationTimer.Tick += RecordingDurationTimer_Tick;
         _aliasSaveDebounceTimer.Tick += AliasSaveDebounceTimer_Tick;
         _meetingPromptService.Reset();
 OnPropertyChanged(nameof(SelectedMicrophone));
@@ -879,6 +885,9 @@ private void ShowOnboardingIfNeeded()
     {
         return;
     }
+    const int totalSteps = 4;
+    var currentStep = 0;
+
     var window = new Window
     {
         Owner = this,
@@ -895,44 +904,77 @@ private void ShowOnboardingIfNeeded()
     };
     var root = new DockPanel { Margin = new Thickness(28) };
     window.Content = root;
-    var footer = new DockPanel { Margin = new Thickness(0, 20, 0, 0) };
-    DockPanel.SetDock(footer, Dock.Bottom);
-    root.Children.Add(footer);
-    var finish = new WpfButton
+
+    // Bottom bar: dots + buttons
+    var footerBar = new DockPanel { Margin = new Thickness(0, 20, 0, 0) };
+    DockPanel.SetDock(footerBar, Dock.Bottom);
+    root.Children.Add(footerBar);
+
+    // Step dots (left side)
+    var dotsPanel = new StackPanel { Orientation = WpfOrientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+    var dots = new System.Windows.Shapes.Ellipse[totalSteps];
+    for (int i = 0; i < totalSteps; i++)
     {
-        Content = "Start using Muesli",
-        Style = (Style)FindResource("PrimaryButton"),
-        MinWidth = 160,
+        dots[i] = new System.Windows.Shapes.Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            Margin = new Thickness(0, 0, 6, 0),
+            Fill = i == 0
+                ? (System.Windows.Media.Brush)FindResource("AccentBlueBrush")
+                : (System.Windows.Media.Brush)FindResource("TextTertiaryBrush")
+        };
+        dotsPanel.Children.Add(dots[i]);
+    }
+    DockPanel.SetDock(dotsPanel, Dock.Left);
+    footerBar.Children.Add(dotsPanel);
+
+    // Buttons (right side)
+    var buttonsPanel = new StackPanel
+    {
+        Orientation = WpfOrientation.Horizontal,
         HorizontalAlignment = System.Windows.HorizontalAlignment.Right
     };
-    DockPanel.SetDock(finish, Dock.Right);
-    footer.Children.Add(finish);
+    DockPanel.SetDock(buttonsPanel, Dock.Right);
+    footerBar.Children.Add(buttonsPanel);
+
     var skip = new WpfButton
     {
         Content = "Skip",
         Style = (Style)FindResource("GhostButton"),
+        MinWidth = 60,
+        Margin = new Thickness(0, 0, 10, 0)
+    };
+    buttonsPanel.Children.Add(skip);
+    var back = new WpfButton
+    {
+        Content = "Back",
+        Style = (Style)FindResource("SecondaryButton"),
         MinWidth = 80,
         Margin = new Thickness(0, 0, 10, 0),
-        HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+        Visibility = Visibility.Collapsed
     };
-    DockPanel.SetDock(skip, Dock.Right);
-    footer.Children.Add(skip);
-    var bodyScroll = new ScrollViewer
+    buttonsPanel.Children.Add(back);
+    var next = new WpfButton
     {
-        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        Content = "Next",
+        Style = (Style)FindResource("PrimaryButton"),
+        MinWidth = 120
     };
-    root.Children.Add(bodyScroll);
-    var body = new StackPanel();
-    bodyScroll.Content = body;
-    body.Children.Add(new TextBlock
+    buttonsPanel.Children.Add(next);
+
+    // Step pages
+    var stepPages = new StackPanel[totalSteps];
+    for (int i = 0; i < totalSteps; i++)
     {
-        Text = "Set up local dictation",
-        Style = (Style)FindResource("PageTitle")
-    });
-    body.Children.Add(new TextBlock
+        stepPages[i] = new StackPanel { Visibility = i == 0 ? Visibility.Visible : Visibility.Collapsed };
+    }
+
+    // Step 0: Welcome
+    stepPages[0].Children.Add(new TextBlock { Text = "Welcome to Muesli", Style = (Style)FindResource("PageTitle") });
+    stepPages[0].Children.Add(new TextBlock
     {
-        Text = "Choose a microphone, pick a shortcut that is free on this Windows laptop, and verify local model readiness.",
+        Text = "Local, private speech-to-text for Windows. Let's get you set up in a few quick steps.",
         Style = (Style)FindResource("PageSubtitle")
     });
     var nameInput = new WpfTextBox
@@ -941,45 +983,76 @@ private void ShowOnboardingIfNeeded()
         MinWidth = 260,
         Style = (Style)FindResource("MuesliTextBox")
     };
-    body.Children.Add(BuildOnboardingRow("Your name", "Shown in the sidebar greeting.", nameInput));
+    stepPages[0].Children.Add(BuildOnboardingRow("Your name", "Shown in the sidebar greeting.", nameInput));
+
+    // Step 1: Hardware
+    stepPages[1].Children.Add(new TextBlock { Text = "Hardware & Shortcut", Style = (Style)FindResource("PageTitle") });
+    stepPages[1].Children.Add(new TextBlock
+    {
+        Text = "Choose a microphone and pick a shortcut that is free on this Windows laptop.",
+        Style = (Style)FindResource("PageSubtitle")
+    });
     var micCombo = new System.Windows.Controls.ComboBox
     {
         ItemsSource = MicrophoneDevices,
         SelectedItem = SelectedMicrophone,
         Style = (Style)FindResource("MuesliComboBox")
     };
-    body.Children.Add(BuildOnboardingRow("Microphone", "Used for dictation and meeting recording.", micCombo));
+    stepPages[1].Children.Add(BuildOnboardingRow("Microphone", "Used for dictation and meeting recording.", micCombo));
     var hotkeyCombo = new System.Windows.Controls.ComboBox
     {
         ItemsSource = HotkeyOptions,
         SelectedItem = SelectedHotkey,
         Style = (Style)FindResource("MuesliComboBox")
     };
-    body.Children.Add(BuildOnboardingRow("Shortcut", "Use an alternate shortcut if F8 is already taken.", hotkeyCombo));
+    stepPages[1].Children.Add(BuildOnboardingRow("Shortcut", "Use an alternate shortcut if F8 is already taken.", hotkeyCombo));
     var startupCheck = new System.Windows.Controls.CheckBox
     {
         Content = "Launch at login",
         IsChecked = StartAtLogin,
         Style = (Style)FindResource("MuesliCheckBox")
     };
-    body.Children.Add(BuildOnboardingRow("Startup", "Keep Muesli available from the tray after sign-in.", startupCheck));
+    stepPages[1].Children.Add(BuildOnboardingRow("Startup", "Keep Muesli available from the tray after sign-in.", startupCheck));
+
+    // Step 2: Preferences
+    stepPages[2].Children.Add(new TextBlock { Text = "Preferences", Style = (Style)FindResource("PageTitle") });
+    stepPages[2].Children.Add(new TextBlock
+    {
+        Text = "Configure visual and privacy preferences.",
+        Style = (Style)FindResource("PageSubtitle")
+    });
     var indicatorCheck = new System.Windows.Controls.CheckBox
     {
         Content = "Show floating indicator",
         IsChecked = ShowFloatingIndicator,
         Style = (Style)FindResource("MuesliCheckBox")
     };
-    body.Children.Add(BuildOnboardingRow("Floating indicator", "Mirrors the OG app's small dictation pill.", indicatorCheck));
+    stepPages[2].Children.Add(BuildOnboardingRow("Floating indicator", "Mirrors the OG app's small dictation pill.", indicatorCheck));
+    var fillerCheck = new System.Windows.Controls.CheckBox
+    {
+        Content = "Remove filler words",
+        IsChecked = FillerWordFilterEnabled,
+        Style = (Style)FindResource("MuesliCheckBox")
+    };
+    stepPages[2].Children.Add(BuildOnboardingRow("Filler word filter", "Strip verbal disfluencies (uh, um, er, like, etc.) from transcriptions.", fillerCheck));
     var crashCheck = new System.Windows.Controls.CheckBox
     {
         Content = "Send anonymous crash reports",
         IsChecked = _crashReportingEnabled,
         Style = (Style)FindResource("MuesliCheckBox")
     };
-    body.Children.Add(BuildOnboardingRow(
+    stepPages[2].Children.Add(BuildOnboardingRow(
         "Crash reporting",
-        "Helps fix bugs faster. Only stack traces and app version are sent — never your transcripts, meeting recordings, or settings. You can change this in About → Privacy.",
+        "Helps fix bugs faster. Only stack traces and app version are sent — never your transcripts, meeting recordings, or settings.",
         crashCheck));
+
+    // Step 3: Model setup
+    stepPages[3].Children.Add(new TextBlock { Text = "Model Setup", Style = (Style)FindResource("PageTitle") });
+    stepPages[3].Children.Add(new TextBlock
+    {
+        Text = "Verify local model readiness. Whisper base is the recommended CPU fallback for broad laptop support.",
+        Style = (Style)FindResource("PageSubtitle")
+    });
     var readinessText = new WpfTextBox
     {
         Text = SetupReadiness,
@@ -1010,7 +1083,8 @@ private void ShowOnboardingIfNeeded()
     readinessPanel.Children.Add(readinessText);
     readinessPanel.Children.Add(readinessActions);
     readinessPanel.Children.Add(setupStatusText);
-    body.Children.Add(BuildOnboardingRow("Local model readiness", "Whisper base is the recommended CPU fallback for broad laptop support.", readinessPanel));
+    stepPages[3].Children.Add(BuildOnboardingRow("Local model readiness", "", readinessPanel));
+
     void RefreshRuntimeSetupUi()
     {
         setupStatusText.Text = RuntimeSetupStatus;
@@ -1060,13 +1134,41 @@ private void ShowOnboardingIfNeeded()
         }
     };
     RefreshRuntimeSetupUi();
-    finish.Click += (_, _) =>
+
+    // Layout: stack all step pages into a single scroll viewer
+    var bodyScroll = new ScrollViewer
+    {
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+    };
+    var bodyContainer = new StackPanel();
+    foreach (var page in stepPages) bodyContainer.Children.Add(page);
+    bodyScroll.Content = bodyContainer;
+    root.Children.Add(bodyScroll);
+
+    void ShowStep(int step)
+    {
+        currentStep = step;
+        for (int i = 0; i < totalSteps; i++)
+        {
+            stepPages[i].Visibility = i == step ? Visibility.Visible : Visibility.Collapsed;
+            dots[i].Fill = i == step
+                ? (System.Windows.Media.Brush)FindResource("AccentBlueBrush")
+                : (System.Windows.Media.Brush)FindResource("TextTertiaryBrush");
+        }
+        back.Visibility = step > 0 ? Visibility.Visible : Visibility.Collapsed;
+        next.Content = step == totalSteps - 1 ? "Start using Muesli" : "Next";
+        bodyScroll.ScrollToTop();
+    }
+
+    void ApplyAllSettings()
     {
         UserName = string.IsNullOrWhiteSpace(nameInput.Text) ? UserName : nameInput.Text.Trim();
         SelectedMicrophone = micCombo.SelectedItem as string ?? SelectedMicrophone;
         SelectedHotkey = hotkeyCombo.SelectedItem as string ?? SelectedHotkey;
         StartAtLogin = startupCheck.IsChecked == true;
         ShowFloatingIndicator = indicatorCheck.IsChecked == true;
+        FillerWordFilterEnabled = fillerCheck.IsChecked == true;
         _crashReportingEnabled = crashCheck.IsChecked == true;
         _crashReportingStartupValue = _crashReportingEnabled;
         _crashReportingPromptShown = true;
@@ -1074,8 +1176,25 @@ private void ShowOnboardingIfNeeded()
         OnPropertyChanged(nameof(CrashReportingRestartHintVisible));
         _onboardingCompleted = true;
         SaveSettings();
-        window.Close();
-        _ = EnsureBaseModelDownloadedAsync();
+    }
+
+    next.Click += (_, _) =>
+    {
+        if (currentStep < totalSteps - 1)
+        {
+            ShowStep(currentStep + 1);
+        }
+        else
+        {
+            ApplyAllSettings();
+            window.Close();
+            _ = EnsureBaseModelDownloadedAsync();
+        }
+    };
+    back.Click += (_, _) =>
+    {
+        if (currentStep > 0)
+            ShowStep(currentStep - 1);
     };
     skip.Click += (_, _) =>
     {
@@ -1105,14 +1224,17 @@ private Border BuildOnboardingRow(string title, string description, FrameworkEle
         FontWeight = FontWeights.SemiBold,
         Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
     });
-    copy.Children.Add(new TextBlock
+    if (!string.IsNullOrEmpty(description))
     {
-        Text = description,
-        Margin = new Thickness(0, 5, 0, 0),
-        FontSize = 12,
-        TextWrapping = TextWrapping.Wrap,
-        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush")
-    });
+        copy.Children.Add(new TextBlock
+        {
+            Text = description,
+            Margin = new Thickness(0, 5, 0, 0),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush")
+        });
+    }
     grid.Children.Add(copy);
     control.VerticalAlignment = VerticalAlignment.Center;
     Grid.SetColumn(control, 1);
@@ -1688,6 +1810,53 @@ private void ShowMeetingDetailTab(bool showTranscript)
     MeetingTranscriptTabLabel.Foreground = showTranscript
         ? (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
         : (System.Windows.Media.Brush)FindResource("TextSecondaryBrush");
+}
+private void MeetingTitleDisplay_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+{
+    MeetingTitleEditor.Text = SelectedMeetingTitle;
+    MeetingTitleDisplay.Visibility = Visibility.Collapsed;
+    MeetingTitleEditor.Visibility = Visibility.Visible;
+    MeetingTitleEditor.Focus();
+    MeetingTitleEditor.SelectAll();
+}
+private void CommitMeetingTitleEdit()
+{
+    if (MeetingTitleEditor.Visibility != Visibility.Visible)
+        return;
+    MeetingTitleEditor.Visibility = Visibility.Collapsed;
+    MeetingTitleDisplay.Visibility = Visibility.Visible;
+    var newTitle = MeetingTitleEditor.Text?.Trim();
+    if (string.IsNullOrWhiteSpace(newTitle) || _selectedMeeting is null)
+        return;
+    if (newTitle == _selectedMeeting.Title)
+        return;
+    var index = Meetings.IndexOf(_selectedMeeting);
+    if (index < 0)
+        return;
+    var updated = _selectedMeeting with { Title = newTitle };
+    Meetings[index] = updated;
+    _selectedMeeting = updated;
+    OnPropertyChanged(nameof(SelectedMeetingTitle));
+    SaveMeetings();
+    RefreshMeetingViews();
+}
+private void MeetingTitleEditor_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+{
+    if (e.Key == Key.Return)
+    {
+        CommitMeetingTitleEdit();
+        e.Handled = true;
+    }
+    else if (e.Key == Key.Escape)
+    {
+        MeetingTitleEditor.Visibility = Visibility.Collapsed;
+        MeetingTitleDisplay.Visibility = Visibility.Visible;
+        e.Handled = true;
+    }
+}
+private void MeetingTitleEditor_LostFocus(object sender, RoutedEventArgs e)
+{
+    CommitMeetingTitleEdit();
 }
 private void BuildSpeakerAliasPanel()
 {
@@ -2298,7 +2467,9 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
             await _meetingRecordingCoordinator.StartAsync(SelectedMicrophone);
             _currentMeetingTitle = detectedTitle;
             _isMeetingRecording = true;
+            _meetingRecordingStartTime = DateTime.UtcNow;
             StartMeetingAutoStopMonitor();
+            ShowMeetingRecordingBanner(detectedTitle);
             OnPropertyChanged(nameof(MeetingRecordingButtonText));
             ShowPage(MeetingsPage, MeetingsNav);
         }
@@ -2312,6 +2483,7 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
     try
     {
         StopMeetingAutoStopMonitor();
+        HideMeetingRecordingBanner();
         DictationStatus = "Transcribing meeting";
         _toastNotificationService.Show("Transcribing meeting", "Processing local meeting audio", ToastState.Transcribing, 0);
         _isMeetingRecording = false;
@@ -2370,6 +2542,7 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
     catch (Exception exception)
     {
         StopMeetingAutoStopMonitor();
+        HideMeetingRecordingBanner();
         _currentMeetingTitle = null;
         _isMeetingRecording = false;
         OnPropertyChanged(nameof(MeetingRecordingButtonText));
@@ -2406,6 +2579,25 @@ private void StopMeetingAutoStopMonitor()
     _meetingMissingScanCount = 0;
     _meetingAutoStopTimer.Stop();
 }
+private void ShowMeetingRecordingBanner(string? title)
+{
+    RecordingBannerTitle.Text = string.IsNullOrWhiteSpace(title) ? "Recording meeting" : $"Recording: {title}";
+    RecordingBannerDuration.Text = "00:00";
+    MeetingRecordingBanner.Visibility = Visibility.Visible;
+    _recordingDurationTimer.Start();
+}
+private void HideMeetingRecordingBanner()
+{
+    _recordingDurationTimer.Stop();
+    MeetingRecordingBanner.Visibility = Visibility.Collapsed;
+}
+private void RecordingDurationTimer_Tick(object? sender, EventArgs e)
+{
+    var elapsed = DateTime.UtcNow - _meetingRecordingStartTime;
+    RecordingBannerDuration.Text = elapsed.TotalHours >= 1
+        ? elapsed.ToString(@"hh\:mm\:ss")
+        : elapsed.ToString(@"mm\:ss");
+}
 private async void MeetingAutoStopTimer_Tick(object? sender, EventArgs e)
 {
     if (!_isMeetingRecording)
@@ -2440,6 +2632,7 @@ private void AliasSaveDebounceTimer_Tick(object? sender, EventArgs e)
 private void ResetMeetingRecordingUi(string status)
 {
     StopMeetingAutoStopMonitor();
+    HideMeetingRecordingBanner();
     _currentMeetingTitle = null;
     _isMeetingRecording = false;
     OnPropertyChanged(nameof(MeetingRecordingButtonText));
