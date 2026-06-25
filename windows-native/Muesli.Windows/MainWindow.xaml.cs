@@ -119,6 +119,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _crashReportingEnabled;
     private bool _crashReportingPromptShown;
     private bool _crashReportingStartupValue;
+    private bool _fillerWordFilterEnabled;
+    private bool _githubStarClicked;
+    private bool _buyMeCoffeeClicked;
+    private int? _nextDictationWordMilestone;
+    private int? _nextMeetingMilestone;
+    private bool _milestonePromptDismissedThisLaunch;
     private UpdateManager? _updateManager;
     private UpdateInfo? _pendingUpdate;
     private bool _isUpdateReady;
@@ -478,6 +484,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public bool FillerWordFilterEnabled
+    {
+        get => _fillerWordFilterEnabled;
+        set
+        {
+            if (SetField(ref _fillerWordFilterEnabled, value))
+            {
+                SaveSettings();
+            }
+        }
+    }
+
     public string PostProcessingPrompt
     {
         get => _postProcessingPrompt;
@@ -729,6 +747,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _crashReportingEnabled = settings.CrashReportingEnabled;
         _crashReportingPromptShown = settings.CrashReportingPromptShown;
         _crashReportingStartupValue = _crashReportingEnabled;
+        _fillerWordFilterEnabled = settings.FillerWordFilterEnabled;
+        _githubStarClicked = settings.GitHubStarClicked;
+        _buyMeCoffeeClicked = settings.BuyMeCoffeeClicked;
+        _nextDictationWordMilestone = settings.NextDictationWordMilestone;
+        _nextMeetingMilestone = settings.NextMeetingMilestone;
         _toastNotificationService.SetSavedPosition(_indicatorLeft, _indicatorTop);
         _toastNotificationService.SetIndicatorAnchor(_selectedIndicatorPosition, clearCustomPosition: false);
         _toastNotificationService.SetIdleIndicatorVisible(_showFloatingIndicator, showNow: false);
@@ -753,6 +776,7 @@ OnPropertyChanged(nameof(SelectedMicrophone));
     OnPropertyChanged(nameof(OpenRouterModel));
     OnPropertyChanged(nameof(PostProcessingEnabled));
     OnPropertyChanged(nameof(EnableDoubleTapDictation));
+    OnPropertyChanged(nameof(FillerWordFilterEnabled));
     OnPropertyChanged(nameof(PostProcessingPrompt));
     OnPropertyChanged(nameof(SelectedTheme));
     OnPropertyChanged(nameof(StartAtLogin));
@@ -1351,6 +1375,10 @@ private async Task StopDictationAsync()
     if (!string.IsNullOrWhiteSpace(result.Text))
     {
         textToUse = DictionaryCorrectionService.Apply(result.Text, DictionaryEntries.Select(entry => entry.Record));
+        if (FillerWordFilterEnabled)
+        {
+            textToUse = FillerWordFilter.Apply(textToUse);
+        }
         textToUse = await PostProcessIfEnabledAsync(textToUse, "dictation", _dictationCoordinator.PostProcessAsync);
         Dictations.Insert(0, new DictationItem(
             $"dict_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
@@ -1365,6 +1393,7 @@ private async Task StopDictationAsync()
         OnPropertyChanged(nameof(WordsDictatedDisplay));
         OnPropertyChanged(nameof(AverageWpm));
         RefreshSearchResults();
+        CheckContributionMilestone(ContributionMilestoneKind.DictationWords, WordsDictated);
     }
     if (textToUse.Length > 0)
     {
@@ -2295,6 +2324,10 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
             new TranscriptionOptions(SelectedAsrEngine, SelectedModelProfile));
         _currentMeetingTitle = null;
         var transcript = DictionaryCorrectionService.Apply(result.Transcript, DictionaryEntries.Select(entry => entry.Record));
+        if (FillerWordFilterEnabled)
+        {
+            transcript = FillerWordFilter.Apply(transcript);
+        }
         transcript = await PostProcessIfEnabledAsync(transcript, "meeting", _meetingTranscriptionClient.PostProcessAsync);
         if (string.IsNullOrWhiteSpace(transcript))
         {
@@ -2332,6 +2365,7 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
         DictationStatus = string.IsNullOrWhiteSpace(transcript) ? "Meeting saved with no detected speech" : "Meeting ready";
         _toastNotificationService.Show("Meeting ready", meeting.Title, ToastState.Success);
         ShowPage(MeetingsPage, MeetingsNav);
+        CheckContributionMilestone(ContributionMilestoneKind.Meetings, Meetings.Count);
     }
     catch (Exception exception)
     {
@@ -3908,7 +3942,12 @@ private MuesliSettings CurrentSettingsSnapshot()
         IndicatorLeft = _indicatorLeft,
         IndicatorTop = _indicatorTop,
         CrashReportingEnabled = _crashReportingEnabled,
-        CrashReportingPromptShown = _crashReportingPromptShown
+        CrashReportingPromptShown = _crashReportingPromptShown,
+        FillerWordFilterEnabled = _fillerWordFilterEnabled,
+        GitHubStarClicked = _githubStarClicked,
+        BuyMeCoffeeClicked = _buyMeCoffeeClicked,
+        NextDictationWordMilestone = _nextDictationWordMilestone,
+        NextMeetingMilestone = _nextMeetingMilestone
     };
 }
 
@@ -4069,6 +4108,149 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
         field = value;
         OnPropertyChanged(propertyName);
         return true;
+    }
+
+    private void CheckContributionMilestone(ContributionMilestoneKind kind, int total)
+    {
+        var storedNext = kind switch
+        {
+            ContributionMilestoneKind.DictationWords => _nextDictationWordMilestone,
+            ContributionMilestoneKind.Meetings => _nextMeetingMilestone,
+            _ => null
+        };
+
+        var resolvedNext = ContributionMilestonePolicy.ResolvedNextMilestone(
+            storedNext, total, kind, _githubStarClicked, _buyMeCoffeeClicked);
+
+        switch (kind)
+        {
+            case ContributionMilestoneKind.DictationWords:
+                _nextDictationWordMilestone = resolvedNext;
+                break;
+            case ContributionMilestoneKind.Meetings:
+                _nextMeetingMilestone = resolvedNext;
+                break;
+        }
+
+        var prompt = ContributionMilestonePolicy.CheckPrompt(
+            kind, total, resolvedNext,
+            _githubStarClicked, _buyMeCoffeeClicked,
+            _milestonePromptDismissedThisLaunch);
+
+        if (prompt is null)
+        {
+            SaveSettings();
+            return;
+        }
+
+        // Advance stored milestone so we don't re-prompt for same level
+        switch (kind)
+        {
+            case ContributionMilestoneKind.DictationWords:
+                _nextDictationWordMilestone = ContributionMilestonePolicy.NextMilestone(total);
+                break;
+            case ContributionMilestoneKind.Meetings:
+                _nextMeetingMilestone = ContributionMilestonePolicy.NextMeetingMilestone(total);
+                break;
+        }
+
+        SaveSettings();
+        ShowContributionMilestonePrompt(prompt);
+    }
+
+    private void ShowContributionMilestonePrompt(ContributionMilestonePrompt prompt)
+    {
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = "Muesli Milestone",
+            Width = 420,
+            Height = 260,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Background = (System.Windows.Media.Brush)FindResource("BackgroundBaseBrush")
+        };
+
+        var stack = new StackPanel { Margin = new Thickness(24) };
+        stack.Children.Add(new TextBlock
+        {
+            Text = prompt.Title,
+            FontSize = 18,
+            FontWeight = FontWeights.Bold,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
+            TextWrapping = TextWrapping.Wrap
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = prompt.Message,
+            FontSize = 13,
+            Margin = new Thickness(0, 10, 0, 18),
+            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        var buttons = new StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right
+        };
+
+        if (prompt.ShowGitHubStar)
+        {
+            var starButton = new WpfButton
+            {
+                Content = "Star on GitHub",
+                Style = (Style)FindResource("PrimaryButton"),
+                Height = 32,
+                Padding = new Thickness(16, 0, 16, 0)
+            };
+            starButton.Click += (_, _) =>
+            {
+                _githubStarClicked = true;
+                SaveSettings();
+                Process.Start(new ProcessStartInfo(ContributionMilestonePrompt.GitHubStarUrl) { UseShellExecute = true });
+                dialog.Close();
+            };
+            buttons.Children.Add(starButton);
+        }
+
+        if (prompt.ShowBuyMeCoffee)
+        {
+            var coffeeButton = new WpfButton
+            {
+                Content = "Buy me a coffee",
+                Style = (Style)FindResource("SecondaryButton"),
+                Height = 32,
+                Margin = new Thickness(8, 0, 0, 0),
+                Padding = new Thickness(16, 0, 16, 0)
+            };
+            coffeeButton.Click += (_, _) =>
+            {
+                _buyMeCoffeeClicked = true;
+                SaveSettings();
+                Process.Start(new ProcessStartInfo(ContributionMilestonePrompt.BuyMeCoffeeUrl) { UseShellExecute = true });
+                dialog.Close();
+            };
+            buttons.Children.Add(coffeeButton);
+        }
+
+        var dismissButton = new WpfButton
+        {
+            Content = "Maybe later",
+            Style = (Style)FindResource("GhostButton"),
+            Height = 32,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        dismissButton.Click += (_, _) =>
+        {
+            _milestonePromptDismissedThisLaunch = true;
+            dialog.Close();
+        };
+        buttons.Children.Add(dismissButton);
+
+        stack.Children.Add(buttons);
+        dialog.Content = stack;
+        dialog.ShowDialog();
     }
 
     private void SaveSettings()
