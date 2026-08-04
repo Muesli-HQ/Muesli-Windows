@@ -1,154 +1,80 @@
 # Muesli Windows
 
-The native Windows app for Muesli — a local-first, privacy-focused dictation and meeting transcription tool.
-
-## What is Muesli?
-
-Muesli runs entirely on your laptop. No cloud transcription. No data leaves your machine.
-
-- **Dictate anywhere** with a global hotkey (`F8` by default). Speak, release, and your transcript is pasted into the active app.
-- **Record meetings** with automatic detection of Google Meet, Zoom, Microsoft Teams, and Webex.
-- **Transcribe locally** using open-source Whisper models (CPU or NVIDIA GPU).
-- **Clean up transcripts** with optional local Qwen post-processing.
-- **Keep everything** in a searchable, persistent history.
+Native Windows app for Muesli: local-first dictation, meeting recording, transcription, notes, and searchable history.
 
 ## Features
 
-- **Dictation** — Hold `F8`, speak, release. Auto-paste or clipboard.
-- **Local Transcription** — Whisper runs on-device. No internet needed.
-- **Meeting Recording** — Auto-detects active meeting windows, captures mic + system audio.
-- **Meeting Summaries** — Auto-generated notes via local rules, OpenAI, or OpenRouter.
-- **Custom Dictionary** — Phrase → replacement pairs for consistent terminology.
-- **Organized History** — Dictations and meetings with folders, search, filtering.
-- **Dark & Light Theme** — Native WPF theming.
-- **Floating Indicator** — Compact pill showing recording/transcribing state.
-- **GPU Acceleration** — Optional NVIDIA Parakeet fast path.
-- **Privacy First** — All processing local. Cloud APIs only if you add your own keys.
+- **Dictation**: hold the global shortcut, speak, release, and paste into the active app.
+- **Native transcription**: seven pinned offline sherpa-onnx models cover Parakeet, Whisper, SenseVoice, Qwen3-ASR, and Cohere; dictation and final meeting/import roles are selected independently.
+- **Native cleanup**: optional local Qwen/GGUF cleanup through LLamaSharp after transcription.
+- **Meeting recording**: captures separate microphone and meeting-audio tracks with an explicit lifecycle, route repair, suspend/crash recovery, and retained-audio playback. Detected meetings attempt Windows process-tree capture and visibly disclose endpoint-loopback fallback.
+- **Native speaker labels**: sherpa-onnx diarization labels recorded meeting system audio when models are cached.
+- **Meeting notes**: local summaries by default, with OpenAI or OpenRouter available when you add keys.
+- **History and search**: dictations, meetings, folders, filters, custom dictionary, and export.
 
-## Installation
+## Install
 
-### Download
+Download and extract `muesli-windows-v1-win-x64.zip`, then run `Muesli.exe`.
 
-1. Download the latest release: `muesli-windows-v1-win-x64.zip`
-2. Extract to a folder
-3. Run `setup-worker-runtime.ps1` to install Python dependencies
-4. Launch `Muesli.exe`
+The Python runtime has been removed. No Python, venv, or external transcription worker runtime is required. Model preparation is an explicit action in Models; selecting a role never starts a download or silently changes engines.
 
-### Optional Installer
+## Build
 
 ```powershell
-.\scripts\build-installer.ps1
-# Output: artifacts\MuesliSetup-0.2.0-win-x64.exe
+dotnet build .\windows-native\Muesli.Windows\Muesli.Windows.csproj --no-restore
 ```
 
-## Quick Start
-
-1. **First Launch** — Complete onboarding: pick microphone, hotkey, indicator preference.
-2. **Download a Model** — Models → Download base (recommended CPU fallback).
-3. **Test Your Mic** — Models → Test microphone.
-4. **Dictate** — Hold `F8`, speak, release.
-5. **Detect Meetings** — Open Google Meet, Zoom, Teams, or Webex. Muesli prompts you to record.
-
-## Tech Stack
-
-- **UI:** WPF .NET 8, XAML, Inter font
-- **Audio:** NAudio (WASAPI microphone + system loopback)
-- **Transcription:** Python worker — Faster-Whisper, NVIDIA Parakeet (optional), Qwen post-processing
-- **Packaging:** Self-contained `dotnet publish` + Inno Setup
-
-## Development
-
-### Prerequisites
-
-- Windows 10/11 x64
-- .NET 8 SDK
-- Python 3.11 or 3.12
-- Inno Setup 6 (optional, for installer)
-
-### Build
+## Package
 
 ```powershell
-dotnet build .\windows-native\Muesli.Windows\Muesli.Windows.csproj -c Release
-```
-
-### Install Worker Runtime
-
-```powershell
-.\scripts\setup-worker-runtime.ps1
-```
-
-Optional post-processing:
-
-```powershell
-.\scripts\setup-worker-runtime.ps1 -WithPostProcessing
-```
-
-### Package
-
-```powershell
-.\scripts\package-windows-v1.ps1      # ZIP
-.\scripts\build-installer.ps1          # EXE
-```
-
-### Package QA
-
-```powershell
+.\scripts\package-windows-v1.ps1
 .\scripts\test-windows-package.ps1
+.\scripts\build-installer.ps1
 ```
+
+Recorded-meeting and import regression checks are available through
+`scripts\benchmark-native-meeting.ps1` and `scripts\test-media-imports.ps1`.
+The fail-closed physical meeting-session matrix is documented in
+`docs\PHASE3_QUALIFICATION.md` and checked by
+`scripts\qualify-meeting-session-lifecycle.ps1`.
+The packaged release gate is `scripts\qualify-windows-release.ps1`; it produces
+machine-readable native-runtime, stress, memory, package-hash, signature, and
+fresh-launch log evidence.
 
 ## Architecture
 
-The WPF app communicates with a Python worker process via JSON-RPC over stdin/stdout. The worker handles model loading, transcription, and optional post-processing. The UI doesn't care whether the backend is Whisper CPU, Whisper CUDA, Parakeet, or a future native engine.
+- **UI**: WPF .NET 8, XAML, Inter font.
+- **Audio**: NAudio WASAPI microphone capture, Windows process-tree loopback when available for a detected meeting, and an explicitly disclosed render-endpoint loopback fallback.
+- **ASR**: role-scoped `NativeTranscriptionClient` instances with sherpa-onnx offline ONNX models. Dictation has one recognizer owner; recorded meetings and imports share the separately selected final-model owner.
+- **Cleanup**: `NativeTextCleanupService` with LLamaSharp / llama.cpp GGUF models.
+- **Diarization**: `NativeDiarizationClient` with sherpa-onnx ONNX models.
+- **Model caches**:
+  - `%USERPROFILE%\.cache\muesli\native-parakeet`
+  - `%USERPROFILE%\.cache\muesli\native-asr`
+  - `%USERPROFILE%\.cache\muesli\native-diarization`
+  - `%USERPROFILE%\.cache\muesli\native-cleanup`
+- **App data**: `%APPDATA%\muesli`
 
-## Configuration
+## Development Notes
 
-Settings stored in `%APPDATA%\muesli\windows-settings.json`:
+- Active app: `windows-native/Muesli.Windows/`
+- Build before launch: `dotnet build windows-native\Muesli.Windows\Muesli.Windows.csproj --no-restore`
+- Run debug build directly: `windows-native\Muesli.Windows\bin\Debug\net8.0-windows\Muesli.exe`
+- Do not ship Python worker files, external transcription runtime setup files, or venv setup.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `Hotkey` | `F8` | Global dictation shortcut |
-| `AsrEngine` | `whisper` | `whisper` or `parakeet-v3` |
-| `ModelProfile` | `base` | Whisper model size |
-| `PasteBehavior` | `active-app` | `active-app` or `clipboard` |
-| `Theme` | `dark` | `dark` or `light` |
+## Limitations
 
-Optional environment variables:
-- `OPENAI_API_KEY`
-- `OPENROUTER_API_KEY`
-- `MUESLI_PYTHON`
-
-## Known Limitations
-
-- Python is not bundled yet; setup script creates a local `.venv`
-- Not code-signed yet; Windows SmartScreen may warn on first launch
-- System loopback capture can be blocked by some audio setups; mic recording still works
-- Meeting speaker separation is basic (mic = `You`, loopback = `System audio`)
-- Meeting detection is heuristic (app titles + browser URLs + process names)
-
-## Roadmap
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md).
-
-## Contributing
-
-Contributions welcome! Priority areas:
-- Visual polish (match OG macOS design system)
-- Meeting detection reliability
-- GPU path testing on diverse NVIDIA hardware
-- Bundling Python into the app for zero-dependency installs
-
-Open an issue or PR at [github.com/Muesli-HQ/Muesli-Windows](https://github.com/Muesli-HQ/Muesli-Windows).
+- Supported ASR families use the packaged CPU provider and select the packaged CUDA provider when compatible NVIDIA dependencies are available; provider fallback never changes the model or ASR engine.
+- Qwen cleanup is disabled by default until a GGUF model is placed in the native-cleanup cache.
+- Process-targeted loopback requires Windows build 20348 or newer and a live detected-process ID. When Windows blocks it, Muesli visibly falls back to render-endpoint loopback, which can include unrelated system sounds; mic recording can continue in a disclosed degraded state.
+- Preparing a missing model requires an explicit network-backed download. Transcription itself fails closed when the selected role is missing or unverified.
+- Live meeting transcription is off by default. The explicit Nemotron 3.5 option has passed packaged Windows real-inference and Silero-boundary qualification; preparing it is network-backed and never enables it automatically. Long physical-meeting, Bluetooth, route-change, CUDA-live, and human multilingual qualification remain open.
+- Installer is not code-signed until a signing certificate is configured.
 
 ## Acknowledgements
 
-Muesli is developed across native platform apps in the Muesli organization. The Windows app follows the same product direction and design language as the macOS app.
-
-Built with:
-- [Whisper](https://github.com/openai/whisper) by OpenAI
-- [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper)
-- [NAudio](https://github.com/naudio/NAudio)
-- [Inter](https://rsms.me/inter/) font family
-
-## License
-
-MIT License — free for personal and commercial use.
+- NVIDIA Parakeet and Qwen3-ASR
+- OpenAI Whisper, SenseVoice, and Cohere Transcribe model artifacts
+- sherpa-onnx
+- NAudio
+- Inter font family
