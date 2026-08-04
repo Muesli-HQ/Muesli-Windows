@@ -271,7 +271,7 @@ public sealed class NativeDiarizationClient : IDisposable
             }
             if (!VerifySha256(EmbeddingModelPath, EmbeddingModelSha256).Matches)
             {
-                CapturedAudio.TryDelete(EmbeddingModelPath);
+                TryDelete(EmbeddingModelPath);
                 await DownloadFileAsync(
                     EmbeddingModelUrl,
                     EmbeddingModelPath,
@@ -403,7 +403,7 @@ public sealed class NativeDiarizationClient : IDisposable
         }
         finally
         {
-            CapturedAudio.TryDelete(archivePath);
+            TryDelete(archivePath);
             TryDeleteDirectory(stagingPath);
         }
     }
@@ -457,7 +457,7 @@ public sealed class NativeDiarizationClient : IDisposable
         }
         finally
         {
-            CapturedAudio.TryDelete(tempPath);
+            TryDelete(tempPath);
         }
     }
 
@@ -506,7 +506,22 @@ public sealed class NativeDiarizationClient : IDisposable
         }
         finally
         {
-            CapturedAudio.TryDelete(temporaryPath);
+            TryDelete(temporaryPath);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup; a locked artifact can be retried on the next setup attempt.
         }
     }
 
