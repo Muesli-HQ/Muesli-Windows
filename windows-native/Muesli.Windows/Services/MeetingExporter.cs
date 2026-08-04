@@ -56,7 +56,7 @@ public static class MeetingExporter
         }
     }
 
-    private static string BuildMarkdown(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases)
+    internal static string BuildMarkdown(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases)
     {
         var summary = ApplyAliasesToNotes(meeting.Summary ?? "", aliases);
         var transcript = ApplyAliases(meeting.Transcript ?? "", aliases);
@@ -230,7 +230,7 @@ public static class MeetingExporter
         }).GeneratePdf(outputPath);
     }
 
-    private static string SuggestFilename(MeetingItem meeting, MeetingExportMode mode)
+    internal static string SuggestFilename(MeetingItem meeting, MeetingExportMode mode)
     {
         var sanitized = SanitizeFilename(meeting.Title);
         if (string.IsNullOrWhiteSpace(sanitized))
