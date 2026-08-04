@@ -10,7 +10,7 @@ $project = Join-Path $root "windows-native\Muesli.Windows\Muesli.Windows.csproj"
 $publishRoot = Join-Path $root "publish"
 $publishDir = Join-Path $publishRoot "muesli-windows-$Runtime"
 $artifactsDir = Join-Path $root "artifacts"
-$zipPath = Join-Path $artifactsDir "muesli-windows-v1-$Runtime.zip"
+$zipPath = Join-Path $artifactsDir "muesli-windows-0.2.0-$Runtime.zip"
 $lastPublishFile = Join-Path $artifactsDir "last-publish-dir.txt"
 
 if (Test-Path $publishDir) {
@@ -51,15 +51,14 @@ foreach ($culture in $satelliteCultureDirs) {
     }
 }
 
-Get-ChildItem -LiteralPath $publishDir -Directory -Recurse -Filter "__pycache__" -ErrorAction SilentlyContinue |
-    Remove-Item -Recurse -Force
-Get-ChildItem -LiteralPath $publishDir -File -Recurse -ErrorAction SilentlyContinue |
-    Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
+# Public release packages intentionally exclude symbols and repository-only qualification
+# tooling. Symbols can be produced as a separate controlled artifact when needed.
+Get-ChildItem -LiteralPath $publishDir -Recurse -File -Filter "*.pdb" -ErrorAction SilentlyContinue |
     Remove-Item -Force
 
 $readme = @"
-Muesli for Windows v1
-=====================
+Muesli for Windows 0.2.0
+========================
 
 Run:
   Muesli.exe
@@ -67,37 +66,35 @@ Run:
 Install:
   powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
   Optional:
-    powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -WithPostProcessing -StartAtLogin
-    powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -WithParakeet
+    powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -StartAtLogin
 
 Current v1 requirements:
   - Windows x64.
-  - Python 3.11 or 3.12 available through `py`, `python`, or `python3` for first-time setup.
-  - Verify Python/runtime compatibility without installing packages:
-      powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1 -CheckOnly
-  - Verify the extracted/installed package shape:
-      powershell -ExecutionPolicy Bypass -File .\fresh-machine-qa.ps1
-  - Run setup-worker-runtime.ps1 once from this folder to create a local .venv beside Muesli.exe:
-      powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1
-  - Optional Qwen post-processing dependencies, only needed if transcript cleanup is enabled:
-      powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1 -WithPostProcessing
-      set MUESLI_ALLOW_MODEL_DOWNLOAD=1 for the first Qwen model download, or preinstall the model in `%USERPROFILE%\.cache\muesli`.
-  - Optional NVIDIA Parakeet backend dependencies, only for CUDA/NVIDIA machines:
-      powershell -ExecutionPolicy Bypass -File .\setup-worker-runtime.ps1 -WithParakeet
+  - No Python, venv, or external worker runtime is required.
 
 Default shortcut:
   Hold the configured shortcut to dictate. Release it to transcribe and paste into the previously focused app.
   The default is F8, and it can be changed in Settings.
 
 Notes:
-  - This build is local-first and uses Whisper through the bundled worker script.
-  - NVIDIA Parakeet v3 is selectable as an optional backend when the Parakeet runtime dependencies are installed.
-  - Optional Qwen post-processing can clean grammar, punctuation, and dictated lists after transcription.
-  - The Models page can download the selected Whisper model and the optional Qwen cleanup model into the local cache.
+  - This build is local-first. Seven offline sherpa-onnx models cover Parakeet, Whisper, SenseVoice, Qwen3-ASR, and Cohere.
+  - Dictation and final meeting/import roles are selected independently. Live meeting transcription is Off until a packaged streaming model is qualified.
+  - Model preparation is explicit and network-backed. Selecting or downloading does not activate a recognizer.
+  - Archives and every runtime-required model file are verified against pinned SHA-256 hashes before use.
+  - The package includes the version-matched Sherpa CUDA provider. NVIDIA GPU acceleration requires CUDA Toolkit 12.x and cuDNN 9.x dependencies.
+  - On an NVIDIA system, install the optional dependencies once with:
+      powershell -ExecutionPolicy Bypass -File .\install-parakeet-cuda-runtime.ps1
+    Restart Muesli afterward. CPU-only systems do not need this step.
+  - Supported offline models emit timestamped segments for recorded meetings and native diarization alignment where the backend supplies token timing.
+  - Recorded meetings use native sherpa-onnx diarization for speaker labels when system audio is available.
+  - Qwen cleanup can run locally through native LLamaSharp / llama.cpp with a GGUF model and does not use Python.
   - Meeting summaries can use local fallback, OpenAI, or OpenRouter. Enter provider keys in Settings, or set OPENAI_API_KEY / OPENROUTER_API_KEY.
-  - Model cache is stored in `%USERPROFILE%\.cache\muesli`.
+  - Parakeet model cache is stored in `%USERPROFILE%\.cache\muesli\native-parakeet`.
+  - Other offline ASR caches are stored in `%USERPROFILE%\.cache\muesli\native-asr`.
+  - Diarization model cache is stored in `%USERPROFILE%\.cache\muesli\native-diarization`.
+  - Cleanup model cache is stored in `%USERPROFILE%\.cache\muesli\native-cleanup`.
   - The Models page includes runtime diagnostics, model cache status, and cache management.
-  - Use Models > First-run Setup to check worker readiness, cache the selected Whisper model, open logs, or open the model cache.
+  - Use Models for independent Prepare, Cancel, Retry, Verify, Delete, disk size, status, and diagnostics actions.
   - Settings includes "Start Muesli when I sign in"; it launches the app in the background tray using --background.
   - Settings are stored in `%APPDATA%\muesli\windows-settings.json`.
   - Dictations, meetings, and dictionary data are stored in `%APPDATA%\muesli\data`.
@@ -112,43 +109,49 @@ Muesli Windows v0.2.0 Release Notes
 This build is a native Windows WPF clone of the shipped macOS Muesli app.
 
 Highlights:
-  - Local-first dictation with Faster-Whisper / Whisper.
+  - Seven pinned offline transcription choices with separate dictation and final meeting/import roles.
   - Push-to-talk and captured custom shortcuts, including alternatives when F8 is taken.
   - Active-app paste after dictation.
   - Meeting detection prompts for Google Meet, Zoom, Teams, and Webex foreground windows.
   - Meeting recording, import, notes, transcripts, folders, and search.
   - First-run onboarding for microphone, shortcut, startup, indicator, and model readiness.
-  - Optional NVIDIA Parakeet backend path.
-  - Optional Qwen transcript cleanup.
+  - Native Parakeet, Whisper, SenseVoice, Qwen3-ASR, and Cohere ASR through sherpa-onnx ONNX.
+  - Explicit model preparation with pinned archive/file SHA-256 verification and visible progress.
+  - Version-matched Sherpa ONNX 1.13.4 CUDA provider with explicit CUDA 12/cuDNN 9 diagnostics.
+  - Native sherpa-onnx speaker diarization for recorded meeting transcripts.
+  - Optional native Qwen/GGUF cleanup through LLamaSharp, disabled by default.
 
 Known release requirements:
-  - Python 3.11 or 3.12 is required for first-time local worker setup.
-  - Qwen cleanup requires optional post-processing dependencies and a downloaded local model.
-  - Parakeet requires NVIDIA/CUDA-capable hardware and optional Parakeet dependencies.
+  - Selecting a role never downloads or activates a model; a missing selected role fails closed until prepared.
+  - Supported models use CUDA when its optional NVIDIA dependency pack is installed; otherwise the same model and engine use CPU.
+  - Native diarization models download into the user model cache on first recorded meeting use.
+  - Native Qwen cleanup requires a compatible GGUF model in the native-cleanup cache.
   - Installer is not code-signed until a real signing certificate is configured.
 
 Fresh-machine validation checklist:
   1. Install using MuesliSetup-0.2.0-win-x64.exe.
   2. Confirm onboarding appears once.
   3. Pick a microphone and a shortcut that is not reserved by the test laptop.
-  4. Run Models > First-run Setup > Check setup.
-  5. Download Whisper base and verify dictation with paste into Notepad and Chrome.
+  4. Run Models > Check setup.
+  5. Explicitly prepare the selected dictation model, confirm selection is unchanged, then verify dictation with paste into Notepad and Chrome.
   6. Reboot if Launch at login is enabled and confirm Muesli starts in the tray/background.
   7. Test Google Meet in Chrome and Zoom desktop meeting detection prompts.
   8. Test recorded meeting transcript and Notes/Transcript switching.
-  9. If available, test NVIDIA/CUDA diagnostics and Parakeet selection.
-  10. If enabled, test Qwen cleanup on dictation, imported meeting, and recorded meeting.
+  9. Test imported meeting transcription.
+  10. Confirm no Python or external runtime setup is requested.
+
+Automated gates completed during package creation do not replace the human checks above.
+Signing, target-application paste confirmation, transcription-quality review, and a true
+fresh-machine installer run require separate release evidence.
 "@
 Set-Content -LiteralPath (Join-Path $publishDir "RELEASE-NOTES.txt") -Value $releaseNotes -Encoding UTF8
 
 $shipChecklist = @"
-Muesli Windows Ship Checklist
-=============================
+Muesli Windows Human Ship Checklist
+===================================
 
-Build:
-  [ ] dotnet build .\windows-native\Muesli.Windows\Muesli.Windows.csproj -c Release
-  [ ] .\scripts\build-installer.ps1
-  [ ] .\scripts\test-windows-package.ps1
+This checklist is intentionally human-owned. Automated build or benchmark JSON does not
+mark any item below complete.
 
 Installer / ZIP:
   [ ] Installer launches and completes on a fresh Windows account.
@@ -162,16 +165,17 @@ Core dictation:
   [ ] Shortcut capture works when F8 is already in use.
   [ ] Hold shortcut records and release transcribes.
   [ ] Active-app paste works in Notepad, Chrome, Word, Outlook, Teams, Slack/Discord.
+  [ ] qualify-dictation-target.ps1 records a passing, human-confirmed trace for each supported target app.
+  [ ] summarize-dictation-latency.ps1 passes the release-to-paste median/p95 gates on at least 20 successful dictations.
   [ ] Clipboard fallback works.
 
 Runtime / models:
-  [ ] Python 3.11/3.12 detected.
-  [ ] Whisper dependencies OK.
-  [ ] Whisper base cached and works offline.
-  [ ] tiny/base/small tested on low-end CPU.
-  [ ] CUDA status reported correctly on NVIDIA machine.
-  [ ] Parakeet dependencies and fallback behavior tested on NVIDIA machine.
-  [ ] Qwen dependencies and local model status tested.
+  [ ] Native diarization model status reports correctly.
+  [ ] Every offline model reports Missing, Downloading, Verifying, Ready/Selected, Failed, Runtime unavailable, or Deletion failed accurately.
+  [ ] Supported models report CUDA on a supported NVIDIA test machine after install-parakeet-cuda-runtime.ps1.
+  [ ] Qwen cleanup status reports Disabled, Needs model, Ready, or Runtime unavailable.
+  [ ] Every catalog archive and required runtime file passes pinned SHA-256 verification and works offline after preparation.
+  [ ] Every supported family completes real-audio inference; Parakeet is additionally tested on a CPU-only machine.
 
 Meetings:
   [ ] Google Meet Chrome prompt appears and does not open Outlook.
@@ -180,6 +184,7 @@ Meetings:
   [ ] Webex prompt appears.
   [ ] Dismiss, Join Only, and Join & Record all behave correctly.
   [ ] Recording creates notes/transcript and optional retained audio.
+  [ ] Recorded-meeting ASR and speaker diarization are reviewed against approved media.
 
 UI clone fidelity:
   [ ] Sidebar spacing and selected states match OG screenshots.
@@ -196,11 +201,11 @@ Release:
   [ ] Known limitations documented.
 "@
 Set-Content -LiteralPath (Join-Path $publishDir "SHIP-CHECKLIST.txt") -Value $shipChecklist -Encoding UTF8
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "setup-worker-runtime.ps1") -Destination (Join-Path $publishDir "setup-worker-runtime.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Destination (Join-Path $publishDir "install-windows.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination (Join-Path $publishDir "uninstall-windows.ps1") -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "test-windows-package.ps1") -Destination (Join-Path $publishDir "test-windows-package.ps1") -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "fresh-machine-qa.ps1") -Destination (Join-Path $publishDir "fresh-machine-qa.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-parakeet-cuda-runtime.ps1") -Destination (Join-Path $publishDir "install-parakeet-cuda-runtime.ps1") -Force
+Copy-Item -LiteralPath (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination (Join-Path $publishDir "THIRD-PARTY-NOTICES.md") -Force
+Copy-Item -LiteralPath (Join-Path $root "licenses") -Destination (Join-Path $publishDir "licenses") -Recurse -Force
 Set-Content -LiteralPath $lastPublishFile -Value $publishDir -Encoding UTF8
 
 if (Test-Path $zipPath) {
