@@ -5,9 +5,6 @@ using System.Runtime.InteropServices;
 
 namespace Muesli.Windows.Services;
 
-public sealed class AudioDeviceUnavailableException(string deviceName)
-    : InvalidOperationException($"The selected microphone '{deviceName}' is not currently available.");
-
 public enum MicrophoneProbeFailure { None, Denied, NoEndpoint, Busy, Disconnected, Unknown }
 public sealed record MicrophoneProbeResult(bool Captured, int EndpointCount, long BytesCaptured, float? Peak, string EndpointIdentity, string PolicyHint, MicrophoneProbeFailure Failure, string Message)
 {
