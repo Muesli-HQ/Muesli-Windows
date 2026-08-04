@@ -5,6 +5,8 @@ namespace Muesli.Windows.Services;
 
 public sealed class AppDataStore
 {
+    public const int CurrentMeetingSchemaVersion = 1;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
@@ -114,6 +116,9 @@ public sealed record PersistedMeeting
     public string TemplateName { get; init; } = "";
     public Dictionary<string, string> SpeakerAliases { get; init; } = new();
     public List<string> HealthWarnings { get; init; } = new();
+    public string ManualNotes { get; init; } = "";
+    public bool TitleIsManual { get; init; }
+    public int SchemaVersion { get; init; } = AppDataStore.CurrentMeetingSchemaVersion;
 }
 
 public sealed record PersistedMeetingFolder(
