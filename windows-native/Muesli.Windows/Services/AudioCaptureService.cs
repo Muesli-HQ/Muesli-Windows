@@ -1,19 +1,65 @@
+using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 
 namespace Muesli.Windows.Services;
 
 public sealed class AudioCaptureService : IDisposable
 {
+    public const string SystemDefaultMicrophone = "System default microphone";
+
     private readonly MMDeviceEnumerator _deviceEnumerator = new();
-    private WasapiCapture? _capture;
-    private WaveFileWriter? _writer;
-    private string? _capturePath;
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly EndpointNotificationClient _notificationClient;
+    private readonly List<CaptureSegment> _segments = [];
+    private readonly string _captureDirectory;
+    private readonly string _segmentPrefix;
+    private readonly string _mergedPrefix;
+    private CaptureSession? _session;
+    private string? _preferredDeviceName;
+    private bool _usingFallback;
     private long _sampleCount;
     private double _sumSquares;
     private float _peak;
     private DateTimeOffset _startedAt;
+    private long _lastLevelNotificationTicks;
+    private readonly StreamingPcmNormalizer _livePcmNormalizer = new();
+    private int _disposed;
+
+    public AudioCaptureService(
+        string? captureDirectory = null,
+        string? segmentPrefix = null,
+        bool cleanupInterruptedDictation = true)
+    {
+        _captureDirectory = Path.GetFullPath(captureDirectory ?? DefaultCaptureDirectory());
+        Directory.CreateDirectory(_captureDirectory);
+        _segmentPrefix = string.IsNullOrWhiteSpace(segmentPrefix)
+            ? DictationTemporaryAudioPolicy.SegmentPrefix
+            : segmentPrefix;
+        _mergedPrefix = cleanupInterruptedDictation
+            ? DictationTemporaryAudioPolicy.MergedPrefix
+            : _segmentPrefix.Equals(MeetingSessionJournalStore.MicrophoneCapturePrefix, StringComparison.Ordinal)
+                ? "meeting-mic-merged-"
+                : $"{_segmentPrefix}merged-";
+        StartupCleanupResult = cleanupInterruptedDictation
+            ? DictationTemporaryAudioPolicy.CleanupInterruptedFiles(_captureDirectory)
+            : new CaptureCleanupResult(0, []);
+        _notificationClient = new EndpointNotificationClient(this);
+        _deviceEnumerator.RegisterEndpointNotificationCallback(_notificationClient);
+    }
+
+    public CaptureCleanupResult StartupCleanupResult { get; }
+
+    public event EventHandler? DeviceListChanged;
+    public event EventHandler<AudioRouteChangedEventArgs>? RouteChanged;
+    public event EventHandler<AudioLevelEventArgs>? LevelChanged;
+    public event EventHandler<MeetingAudioMetrics>? MetricsAvailable;
+    public event EventHandler<CaptureFaultedEventArgs>? CaptureFaulted;
+    public event EventHandler<LivePcmSamplesEventArgs>? PcmSamplesAvailable;
 
     public IReadOnlyList<string> ListCaptureDevices()
     {
@@ -25,144 +71,273 @@ public sealed class AudioCaptureService : IDisposable
             .OrderBy(name => name)
             .ToList();
 
-        return devices.Count > 0 ? devices : ["System default microphone"];
+        return [SystemDefaultMicrophone, .. devices];
     }
 
-    public string PickPreferredDeviceName()
+    public string PickPreferredDeviceName() => SystemDefaultMicrophone;
+
+    public async Task StartAsync(string? preferredDeviceName)
     {
-        var devices = ListCaptureDevices();
-        return devices.FirstOrDefault(IsPreferredPhysicalMicrophone) ??
-               devices.FirstOrDefault(device => device.Contains("microphone", StringComparison.OrdinalIgnoreCase) && !IsLikelyVirtualDevice(device)) ??
-               devices.FirstOrDefault() ??
-               "System default microphone";
-    }
-
-    public Task StartAsync(string? preferredDeviceName)
-    {
-        StopAndCleanup();
-
-        var device = PickDevice(preferredDeviceName);
-        _capture = new WasapiCapture(device)
+        await _operationGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            ShareMode = AudioClientShareMode.Shared
-        };
+            ThrowIfDisposed();
+            StopAndCleanupUnderGate(deleteFiles: true);
+            _preferredDeviceName = string.IsNullOrWhiteSpace(preferredDeviceName)
+                ? SystemDefaultMicrophone
+                : preferredDeviceName.Trim();
+            _usingFallback = false;
+            _sampleCount = 0;
+            _sumSquares = 0;
+            _peak = 0;
+            _startedAt = DateTimeOffset.UtcNow;
+            _lastLevelNotificationTicks = 0;
 
-        _capturePath = Path.Combine(CaptureDirectory(), $"native-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.wav");
-        _writer = new WaveFileWriter(_capturePath, _capture.WaveFormat);
-        _sampleCount = 0;
-        _sumSquares = 0;
-        _peak = 0;
-        _startedAt = DateTimeOffset.UtcNow;
-
-        _capture.DataAvailable += OnDataAvailable;
-        _capture.RecordingStopped += (_, _) =>
-        {
-            _writer?.Dispose();
-            _writer = null;
-        };
-        _capture.StartRecording();
-        return Task.CompletedTask;
-    }
-
-    public async Task<CapturedAudio> StopAsync()
-    {
-        if (_capture is null || _capturePath is null)
-        {
-            throw new InvalidOperationException("Audio capture is not running.");
-        }
-
-        var capture = _capture;
-        _capture = null;
-        capture.StopRecording();
-        capture.Dispose();
-
-        _writer?.Dispose();
-        _writer = null;
-
-        await WaitForFileFlushAsync(_capturePath);
-        var normalizedPath = Path.Combine(CaptureDirectory(), "last-dictation.wav");
-        NormalizeToWhisperWav(_capturePath, normalizedPath);
-        var bytes = await File.ReadAllBytesAsync(normalizedPath);
-
-        var rms = _sampleCount == 0 ? 0 : Math.Sqrt(_sumSquares / _sampleCount);
-        var heldMs = (int)(DateTimeOffset.UtcNow - _startedAt).TotalMilliseconds;
-        var result = new CapturedAudio(_capturePath, normalizedPath, bytes, heldMs, rms, _peak);
-        _capturePath = null;
-        return result;
-    }
-
-    public Task CancelAsync()
-    {
-        var path = _capturePath;
-        StopAndCleanup();
-        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-        {
             try
             {
-                File.Delete(path);
+                StartSegment(PickDevice(_preferredDeviceName));
             }
-            catch
+            catch (Exception preferredException) when (!IsSystemDefault(_preferredDeviceName))
             {
-                // Cancel should be best-effort and never throw into the UI.
+                var requested = _preferredDeviceName;
+                try
+                {
+                    StartSegment(PickDefaultCaptureDevice());
+                }
+                catch (Exception fallbackException)
+                {
+                    throw new InvalidOperationException(
+                        "The selected microphone failed and the Windows default microphone could not start.",
+                        new AggregateException(preferredException, fallbackException));
+                }
+                _usingFallback = true;
+                RaiseRouteChanged(new AudioRouteChangedEventArgs(
+                    AudioRouteChangeKind.Fallback,
+                    requested ?? "selected microphone",
+                    _session?.DeviceName ?? SystemDefaultMicrophone,
+                    "The selected microphone is unavailable. Recording is using the current Windows default microphone."));
             }
         }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
 
-        _capturePath = null;
-        return Task.CompletedTask;
+    public async Task<CapturedAudio> StopAsync(bool keepLatestDictationAlias = true)
+    {
+        await _operationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            var stopStarted = Stopwatch.StartNew();
+            var current = Interlocked.Exchange(ref _session, null);
+            current?.StopAndDispose();
+            stopStarted.Stop();
+
+            var segmentPaths = _segments.Select(segment => segment.Path).ToList();
+            if (segmentPaths.Count == 0)
+            {
+                throw new InvalidOperationException("Audio capture is not running and no recoverable audio segment exists.");
+            }
+
+            using var failureCleanup = new CaptureFinalizationCleanup(segmentPaths.ToArray());
+            var flushStarted = Stopwatch.StartNew();
+            foreach (var path in segmentPaths)
+            {
+                await WaitForFileFlushAsync(path).ConfigureAwait(false);
+            }
+            flushStarted.Stop();
+
+            var preparationStarted = Stopwatch.StartNew();
+            var ownedTransientPaths = new List<string>(segmentPaths);
+            var sourcePath = segmentPaths[0];
+            var transcriptionPath = sourcePath;
+            var preparation = "raw WASAPI capture used directly";
+            if (segmentPaths.Count > 1)
+            {
+                transcriptionPath = Path.Combine(_captureDirectory, $"{_mergedPrefix}{Guid.NewGuid():N}.wav");
+                MergeSegments(segmentPaths, transcriptionPath);
+                ownedTransientPaths.Add(transcriptionPath);
+                failureCleanup.Track(transcriptionPath);
+                preparation = $"{segmentPaths.Count} route-safe WASAPI segments normalized to 16 kHz mono";
+            }
+
+            var heldMs = Math.Max(1, (int)(DateTimeOffset.UtcNow - _startedAt).TotalMilliseconds);
+            var byteLength = new FileInfo(transcriptionPath).Length;
+            if (keepLatestDictationAlias && BenchmarkCaptureRetentionPolicy.ShouldRetain(byteLength, heldMs))
+            {
+                var retainedPath = Path.Combine(_captureDirectory, "last-dictation.wav");
+                LinkOrCopyCapture(transcriptionPath, retainedPath);
+                transcriptionPath = retainedPath;
+                byteLength = new FileInfo(transcriptionPath).Length;
+                preparation += "; retained as bounded latest-dictation benchmark audio";
+            }
+            else if (keepLatestDictationAlias)
+            {
+                CapturedAudio.TryDelete(Path.Combine(_captureDirectory, "last-dictation.wav"));
+                preparation += "; benchmark retention skipped because the capture exceeded its privacy bound";
+            }
+            preparationStarted.Stop();
+
+            var deviceNames = _segments
+                .Select(segment => segment.DeviceName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var deviceIds = _segments
+                .Select(segment => segment.DeviceId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var rms = _sampleCount == 0 ? 0 : Math.Sqrt(_sumSquares / _sampleCount);
+            var captured = new CapturedAudio(
+                sourcePath,
+                transcriptionPath,
+                ownedTransientPaths,
+                byteLength,
+                heldMs,
+                rms,
+                _peak,
+                string.Join(" -> ", deviceNames),
+                string.Join(" -> ", deviceIds),
+                segmentPaths.Count,
+                (int)stopStarted.ElapsedMilliseconds,
+                (int)flushStarted.ElapsedMilliseconds,
+                (int)preparationStarted.ElapsedMilliseconds,
+                preparation);
+            _segments.Clear();
+            failureCleanup.Complete();
+            return captured;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public async Task CancelAsync()
+    {
+        await _operationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            StopAndCleanupUnderGate(deleteFiles: true);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
     }
 
     public void Dispose()
     {
-        StopAndCleanup();
-        _deviceEnumerator.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _deviceEnumerator.UnregisterEndpointNotificationCallback(_notificationClient);
+        }
+        catch
+        {
+            // Core Audio may already be shutting down.
+        }
+
+        _operationGate.Wait();
+        try
+        {
+            StopAndCleanupUnderGate(deleteFiles: true);
+        }
+        finally
+        {
+            _operationGate.Release();
+            _operationGate.Dispose();
+            _deviceEnumerator.Dispose();
+        }
     }
 
     private MMDevice PickDevice(string? preferredDeviceName)
     {
-        var devices = _deviceEnumerator
-            .EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
-            .ToList();
-
-        if (!string.IsNullOrWhiteSpace(preferredDeviceName) &&
-            !preferredDeviceName.Equals("System default microphone", StringComparison.OrdinalIgnoreCase))
+        if (IsSystemDefault(preferredDeviceName))
         {
-            var exact = devices.FirstOrDefault(device =>
-                device.FriendlyName.Equals(preferredDeviceName, StringComparison.OrdinalIgnoreCase));
-            if (exact is not null)
-            {
-                return exact;
-            }
-
-            var fuzzy = devices.FirstOrDefault(device =>
-                device.FriendlyName.Contains(preferredDeviceName, StringComparison.OrdinalIgnoreCase) ||
-                preferredDeviceName.Contains(device.FriendlyName, StringComparison.OrdinalIgnoreCase));
-            if (fuzzy is not null)
-            {
-                return fuzzy;
-            }
+            return PickDefaultCaptureDevice();
         }
 
-        var preferred = devices.FirstOrDefault(device => IsPreferredPhysicalMicrophone(device.FriendlyName));
-        if (preferred is not null)
+        var devices = _deviceEnumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active).ToList();
+        var exact = devices.FirstOrDefault(device =>
+            device.FriendlyName.Equals(preferredDeviceName, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null)
         {
-            return preferred;
+            return exact;
         }
 
-        var physical = devices.FirstOrDefault(device =>
-            device.FriendlyName.Contains("microphone", StringComparison.OrdinalIgnoreCase) &&
-            !IsLikelyVirtualDevice(device.FriendlyName));
-        if (physical is not null)
+        var unambiguous = devices.Where(device =>
+            device.FriendlyName.Contains(preferredDeviceName!, StringComparison.OrdinalIgnoreCase) ||
+            preferredDeviceName!.Contains(device.FriendlyName, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (unambiguous.Count == 1)
         {
-            return physical;
+            return unambiguous[0];
         }
 
-        return _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+        throw new AudioDeviceUnavailableException(preferredDeviceName!);
     }
 
-    private void OnDataAvailable(object? sender, WaveInEventArgs e)
+    private MMDevice PickDefaultCaptureDevice()
     {
-        _writer?.Write(e.Buffer, 0, e.BytesRecorded);
-        AccumulateLevels(e.Buffer, e.BytesRecorded, _capture?.WaveFormat);
+        try
+        {
+            return _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+        }
+        catch
+        {
+            try
+            {
+                return _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+            }
+            catch (Exception exception)
+            {
+                throw new InvalidOperationException("Windows has no active default microphone.", exception);
+            }
+        }
+    }
+
+    private void StartSegment(MMDevice device)
+    {
+        var path = Path.Combine(_captureDirectory, $"{_segmentPrefix}{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Guid.NewGuid():N}.wav");
+        var capture = new WasapiCapture(device) { ShareMode = AudioClientShareMode.Shared };
+        CaptureSession? createdSession = null;
+        try
+        {
+            var writer = new WaveFileWriter(path, capture.WaveFormat);
+            createdSession = new CaptureSession(
+                capture,
+                writer,
+                path,
+                device.ID,
+                device.FriendlyName,
+                AccumulateLevels,
+                exception => CaptureFaulted?.Invoke(
+                    this,
+                    new CaptureFaultedEventArgs(MeetingAudioChannel.Microphone, exception)));
+            _segments.Add(new CaptureSegment(path, device.ID, device.FriendlyName));
+            _session = createdSession;
+            capture.StartRecording();
+        }
+        catch
+        {
+            _session = null;
+            if (createdSession is not null)
+            {
+                createdSession.StopAndDispose();
+            }
+            else
+            {
+                capture.Dispose();
+            }
+            _segments.RemoveAll(segment => segment.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+            CapturedAudio.TryDelete(path);
+            throw;
+        }
     }
 
     private void AccumulateLevels(byte[] buffer, int bytesRecorded, WaveFormat? format)
@@ -172,32 +347,152 @@ public sealed class AudioCaptureService : IDisposable
             return;
         }
 
-        if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
+        var metrics = AudioBufferMetrics.Measure(
+            MeetingAudioChannel.Microphone,
+            buffer,
+            bytesRecorded,
+            format);
+        _sampleCount += metrics.SampleCount;
+        _sumSquares += metrics.Rms * metrics.Rms * metrics.SampleCount;
+        _peak = Math.Max(_peak, metrics.Peak);
+        MetricsAvailable?.Invoke(this, metrics);
+        var normalized = _livePcmNormalizer.Convert(buffer, bytesRecorded, format);
+        if (normalized.Samples.Length > 0)
         {
-            for (var offset = 0; offset + 4 <= bytesRecorded; offset += 4)
-            {
-                var sample = BitConverter.ToSingle(buffer, offset);
-                AddSample(sample);
-            }
-            return;
+            PcmSamplesAvailable?.Invoke(this, new LivePcmSamplesEventArgs(
+                LiveTranscriptChannel.Microphone,
+                normalized.Samples,
+                normalized.StartSample));
         }
 
-        if (format.BitsPerSample == 16)
+        var now = Stopwatch.GetTimestamp();
+        var previous = Interlocked.Read(ref _lastLevelNotificationTicks);
+        if (Stopwatch.GetElapsedTime(previous, now) >= TimeSpan.FromMilliseconds(50) &&
+            Interlocked.CompareExchange(ref _lastLevelNotificationTicks, now, previous) == previous)
         {
-            for (var offset = 0; offset + 2 <= bytesRecorded; offset += 2)
-            {
-                var sample = BitConverter.ToInt16(buffer, offset) / 32768f;
-                AddSample(sample);
-            }
+            LevelChanged?.Invoke(this, new AudioLevelEventArgs(metrics.Peak));
         }
     }
 
-    private void AddSample(float sample)
+    private void OnDeviceTopologyChanged(AudioEndpointChange change)
     {
-        var absolute = Math.Abs(sample);
-        _peak = Math.Max(_peak, absolute);
-        _sumSquares += sample * sample;
-        _sampleCount++;
+        DeviceListChanged?.Invoke(this, EventArgs.Empty);
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(() => RecoverRouteAsync(change));
+    }
+
+    private async Task RecoverRouteAsync(AudioEndpointChange change)
+    {
+        await _operationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var current = _session;
+            if (change.Kind == AudioEndpointChangeKind.Added && _usingFallback &&
+                !AddedDeviceMatchesPreference(change.DeviceId))
+            {
+                return;
+            }
+            if (current is null || !AudioRouteRecoveryPolicy.ShouldRotate(
+                    _preferredDeviceName,
+                    current.DeviceId,
+                    _usingFallback,
+                    change))
+            {
+                return;
+            }
+
+            var previousName = current.DeviceName;
+            current.StopAndDispose();
+            _session = null;
+            await WaitForFileFlushAsync(current.Path).ConfigureAwait(false);
+
+            try
+            {
+                var replacement = PickDevice(_preferredDeviceName);
+                StartSegment(replacement);
+                _usingFallback = false;
+                RaiseRouteChanged(new AudioRouteChangedEventArgs(
+                    AudioRouteChangeKind.Recovered,
+                    previousName,
+                    replacement.FriendlyName,
+                    "Microphone route changed. Recording continued in a new loss-bounded segment."));
+            }
+            catch (Exception preferredException) when (!IsSystemDefault(_preferredDeviceName))
+            {
+                try
+                {
+                    var fallback = PickDefaultCaptureDevice();
+                    StartSegment(fallback);
+                    _usingFallback = true;
+                    RaiseRouteChanged(new AudioRouteChangedEventArgs(
+                        AudioRouteChangeKind.Fallback,
+                        previousName,
+                        fallback.FriendlyName,
+                        "The selected microphone disconnected. Recording continued on the Windows default microphone."));
+                }
+                catch (Exception fallbackException)
+                {
+                    RaiseRouteChanged(new AudioRouteChangedEventArgs(
+                        AudioRouteChangeKind.Failed,
+                        previousName,
+                        "unavailable",
+                        $"Microphone disconnected and recovery failed: {fallbackException.Message}",
+                        new AggregateException(preferredException, fallbackException)));
+                }
+            }
+            catch (Exception exception)
+            {
+                RaiseRouteChanged(new AudioRouteChangedEventArgs(
+                    AudioRouteChangeKind.Failed,
+                    previousName,
+                    "unavailable",
+                    $"The Windows default microphone changed, but recording could not continue: {exception.Message}",
+                    exception));
+            }
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private void RaiseRouteChanged(AudioRouteChangedEventArgs args) => RouteChanged?.Invoke(this, args);
+
+    private bool AddedDeviceMatchesPreference(string deviceId)
+    {
+        if (IsSystemDefault(_preferredDeviceName))
+        {
+            return false;
+        }
+        try
+        {
+            var device = _deviceEnumerator.GetDevice(deviceId);
+            return device.FriendlyName.Equals(_preferredDeviceName, StringComparison.OrdinalIgnoreCase) ||
+                   device.FriendlyName.Contains(_preferredDeviceName!, StringComparison.OrdinalIgnoreCase) ||
+                   _preferredDeviceName!.Contains(device.FriendlyName, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void StopAndCleanupUnderGate(bool deleteFiles)
+    {
+        var session = Interlocked.Exchange(ref _session, null);
+        session?.StopAndDispose();
+        if (deleteFiles)
+        {
+            foreach (var segment in _segments)
+            {
+                CapturedAudio.TryDelete(segment.Path);
+            }
+        }
+        _segments.Clear();
     }
 
     private static async Task WaitForFileFlushAsync(string path)
@@ -214,65 +509,365 @@ public sealed class AudioCaptureService : IDisposable
             }
             catch (IOException)
             {
-                // Recorder is still closing the WAV writer.
+                // Recorder is still closing its writer.
             }
-
-            await Task.Delay(40);
+            await Task.Delay(40).ConfigureAwait(false);
         }
     }
 
-    private static void NormalizeToWhisperWav(string sourcePath, string destinationPath)
+    private static void MergeSegments(IReadOnlyList<string> paths, string destinationPath)
     {
-        using var reader = new AudioFileReader(sourcePath);
-        var monoProvider = reader.ToMono();
-        var outFormat = new WaveFormat(16000, 16, 1);
-        var waveProvider = monoProvider.ToWaveProvider16();
-        using var resampler = new MediaFoundationResampler(waveProvider, outFormat)
+        var readers = new List<AudioFileReader>();
+        try
         {
-            ResamplerQuality = 60
-        };
-        WaveFileWriter.CreateWaveFile(destinationPath, resampler);
+            var providers = new List<ISampleProvider>();
+            foreach (var path in paths)
+            {
+                var reader = new AudioFileReader(path);
+                readers.Add(reader);
+                ISampleProvider provider = reader;
+                if (provider.WaveFormat.Channels == 2)
+                {
+                    provider = new StereoToMonoSampleProvider(provider);
+                }
+                else if (provider.WaveFormat.Channels > 2)
+                {
+                    var mono = new MultiplexingSampleProvider([provider], 1);
+                    mono.ConnectInputToOutput(0, 0);
+                    provider = mono;
+                }
+                if (provider.WaveFormat.SampleRate != 16000)
+                {
+                    provider = new WdlResamplingSampleProvider(provider, 16000);
+                }
+                providers.Add(provider);
+            }
+
+            WaveFileWriter.CreateWaveFile16(destinationPath, new ConcatenatingSampleProvider(providers));
+        }
+        finally
+        {
+            foreach (var reader in readers)
+            {
+                reader.Dispose();
+            }
+        }
     }
 
-    private static string CaptureDirectory()
+    private static void LinkOrCopyCapture(string sourcePath, string destinationPath)
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "muesli",
-            "captures");
+        var temporaryPath = $"{destinationPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            if (!CreateHardLink(temporaryPath, sourcePath, IntPtr.Zero))
+            {
+                File.Copy(sourcePath, temporaryPath, overwrite: true);
+            }
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+        }
+        finally
+        {
+            CapturedAudio.TryDelete(temporaryPath);
+        }
+    }
+
+    private static string DefaultCaptureDirectory()
+    {
+        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "muesli", "captures");
         Directory.CreateDirectory(directory);
         return directory;
     }
 
-    private static bool IsPreferredPhysicalMicrophone(string deviceName)
+    internal static bool IsSystemDefault(string? name) =>
+        string.IsNullOrWhiteSpace(name) || name.Equals(SystemDefaultMicrophone, StringComparison.OrdinalIgnoreCase);
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+    private sealed record CaptureSegment(string Path, string DeviceId, string DeviceName);
+
+    private sealed class CaptureSession
     {
-        return deviceName.Contains("microphone array", StringComparison.OrdinalIgnoreCase) ||
-               deviceName.Contains("realtek", StringComparison.OrdinalIgnoreCase);
+        private readonly object _writerGate = new();
+        private readonly Action<byte[], int, WaveFormat?> _accumulateLevels;
+        private readonly Action<Exception> _captureFaulted;
+        private WaveFileWriter? _writer;
+        private int _stopped;
+
+        public CaptureSession(
+            WasapiCapture capture,
+            WaveFileWriter writer,
+            string path,
+            string deviceId,
+            string deviceName,
+            Action<byte[], int, WaveFormat?> accumulateLevels,
+            Action<Exception> captureFaulted)
+        {
+            Capture = capture;
+            _writer = writer;
+            Path = path;
+            DeviceId = deviceId;
+            DeviceName = deviceName;
+            _accumulateLevels = accumulateLevels;
+            _captureFaulted = captureFaulted;
+            Capture.DataAvailable += OnDataAvailable;
+            Capture.RecordingStopped += OnRecordingStopped;
+        }
+
+        public WasapiCapture Capture { get; }
+        public string Path { get; }
+        public string DeviceId { get; }
+        public string DeviceName { get; }
+
+        private void OnDataAvailable(object? sender, WaveInEventArgs args)
+        {
+            lock (_writerGate)
+            {
+                _writer?.Write(args.Buffer, 0, args.BytesRecorded);
+            }
+            _accumulateLevels(args.Buffer, args.BytesRecorded, Capture.WaveFormat);
+        }
+
+        private void OnRecordingStopped(object? sender, StoppedEventArgs args)
+        {
+            DisposeWriter();
+            if (Volatile.Read(ref _stopped) == 0)
+            {
+                _captureFaulted(args.Exception ?? new InvalidOperationException("Microphone capture stopped unexpectedly."));
+            }
+        }
+
+        public void StopAndDispose()
+        {
+            if (Interlocked.Exchange(ref _stopped, 1) != 0)
+            {
+                return;
+            }
+            try
+            {
+                Capture.StopRecording();
+            }
+            finally
+            {
+                Capture.DataAvailable -= OnDataAvailable;
+                Capture.RecordingStopped -= OnRecordingStopped;
+                Capture.Dispose();
+                DisposeWriter();
+            }
+        }
+
+        private void DisposeWriter()
+        {
+            lock (_writerGate)
+            {
+                _writer?.Dispose();
+                _writer = null;
+            }
+        }
     }
 
-    private static bool IsLikelyVirtualDevice(string deviceName)
+    private sealed class EndpointNotificationClient(AudioCaptureService owner) : IMMNotificationClient
     {
-        return deviceName.Contains("steam", StringComparison.OrdinalIgnoreCase) ||
-               deviceName.Contains("streaming", StringComparison.OrdinalIgnoreCase) ||
-               deviceName.Contains("virtual", StringComparison.OrdinalIgnoreCase) ||
-               deviceName.Contains("cable", StringComparison.OrdinalIgnoreCase) ||
-               deviceName.Contains("monitor", StringComparison.OrdinalIgnoreCase);
+        public void OnDeviceStateChanged(string deviceId, DeviceState newState) =>
+            owner.OnDeviceTopologyChanged(new AudioEndpointChange(AudioEndpointChangeKind.StateChanged, deviceId, newState));
+
+        public void OnDeviceAdded(string pwstrDeviceId) =>
+            owner.OnDeviceTopologyChanged(new AudioEndpointChange(AudioEndpointChangeKind.Added, pwstrDeviceId));
+
+        public void OnDeviceRemoved(string deviceId) =>
+            owner.OnDeviceTopologyChanged(new AudioEndpointChange(AudioEndpointChangeKind.Removed, deviceId));
+
+        public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
+        {
+            if (flow is DataFlow.Capture or DataFlow.All)
+            {
+                owner.OnDeviceTopologyChanged(new AudioEndpointChange(AudioEndpointChangeKind.DefaultChanged, defaultDeviceId));
+            }
+        }
+
+        public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key) =>
+            owner.DeviceListChanged?.Invoke(owner, EventArgs.Empty);
     }
 
-    private void StopAndCleanup()
+    [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr securityAttributes);
+}
+
+public static class AudioRouteRecoveryPolicy
+{
+    public static bool ShouldRotate(
+        string? preferredDeviceName,
+        string currentDeviceId,
+        bool usingFallback,
+        AudioEndpointChange change)
     {
-        _capture?.StopRecording();
-        _capture?.Dispose();
-        _capture = null;
-        _writer?.Dispose();
-        _writer = null;
+        return change.Kind switch
+        {
+            AudioEndpointChangeKind.DefaultChanged => AudioCaptureService.IsSystemDefault(preferredDeviceName) || usingFallback,
+            AudioEndpointChangeKind.Removed => change.DeviceId.Equals(currentDeviceId, StringComparison.OrdinalIgnoreCase),
+            AudioEndpointChangeKind.StateChanged =>
+                change.DeviceId.Equals(currentDeviceId, StringComparison.OrdinalIgnoreCase) &&
+                change.State is DeviceState.Disabled or DeviceState.NotPresent or DeviceState.Unplugged,
+            AudioEndpointChangeKind.Added => usingFallback && !AudioCaptureService.IsSystemDefault(preferredDeviceName),
+            _ => false
+        };
     }
 }
 
-public sealed record CapturedAudio(
-    string FilePath,
-    string LastCapturePath,
-    byte[] Bytes,
-    int HeldMs,
-    double Rms,
-    float Peak);
+public enum AudioEndpointChangeKind { Added, Removed, StateChanged, DefaultChanged }
+public sealed record AudioEndpointChange(AudioEndpointChangeKind Kind, string DeviceId, DeviceState State = DeviceState.Active);
+public enum AudioRouteChangeKind { Recovered, Fallback, Failed }
+public sealed class AudioLevelEventArgs(float peak) : EventArgs
+{
+    public float Peak { get; } = peak;
+}
+
+public sealed class AudioRouteChangedEventArgs(
+    AudioRouteChangeKind kind,
+    string previousDevice,
+    string currentDevice,
+    string message,
+    Exception? exception = null) : EventArgs
+{
+    public AudioRouteChangeKind Kind { get; } = kind;
+    public string PreviousDevice { get; } = previousDevice;
+    public string CurrentDevice { get; } = currentDevice;
+    public string Message { get; } = message;
+    public Exception? Exception { get; } = exception;
+}
+
+public sealed class CaptureFaultedEventArgs(
+    MeetingAudioChannel channel,
+    Exception exception) : EventArgs
+{
+    public MeetingAudioChannel Channel { get; } = channel;
+    public Exception Exception { get; } = exception;
+}
+
+public sealed class AudioDeviceUnavailableException(string deviceName)
+    : InvalidOperationException($"The selected microphone '{deviceName}' is not currently available.");
+
+public sealed class CapturedAudio : IDisposable
+{
+    private int _cleaned;
+
+    public CapturedAudio(
+        string sourcePath,
+        string transcriptionPath,
+        IReadOnlyList<string> ownedTransientPaths,
+        long byteLength,
+        int heldMs,
+        double rms,
+        float peak,
+        string deviceName,
+        string deviceId,
+        int routeSegmentCount = 1,
+        int stopDisposeMs = 0,
+        int flushWaitMs = 0,
+        int preparationMs = 0,
+        string preparation = "not measured")
+    {
+        SourcePath = sourcePath;
+        TranscriptionPath = transcriptionPath;
+        OwnedTransientPaths = ownedTransientPaths;
+        ByteLength = byteLength;
+        HeldMs = heldMs;
+        Rms = rms;
+        Peak = peak;
+        DeviceName = deviceName;
+        DeviceId = deviceId;
+        RouteSegmentCount = routeSegmentCount;
+        StopDisposeMs = stopDisposeMs;
+        FlushWaitMs = flushWaitMs;
+        PreparationMs = preparationMs;
+        Preparation = preparation;
+    }
+
+    public string SourcePath { get; }
+    public string TranscriptionPath { get; }
+    public IReadOnlyList<string> OwnedTransientPaths { get; }
+    public long ByteLength { get; }
+    public int HeldMs { get; }
+    public double Rms { get; }
+    public float Peak { get; }
+    public string DeviceName { get; }
+    public string DeviceId { get; }
+    public int RouteSegmentCount { get; }
+    public int StopDisposeMs { get; }
+    public int FlushWaitMs { get; }
+    public int PreparationMs { get; }
+    public string Preparation { get; }
+    public string FilePath => SourcePath;
+    public string LastCapturePath => TranscriptionPath;
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _cleaned, 1) != 0)
+        {
+            return;
+        }
+        foreach (var path in OwnedTransientPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            TryDelete(path);
+        }
+    }
+
+    internal static void TryDelete(string path)
+    {
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+                return;
+            }
+            catch (Exception exception) when ((exception is IOException or UnauthorizedAccessException) && attempt < 4)
+            {
+                Thread.Sleep(25 * attempt);
+            }
+            catch
+            {
+                return;
+            }
+        }
+    }
+}
+
+internal sealed class CaptureFinalizationCleanup : IDisposable
+{
+    private readonly HashSet<string> _ownedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private bool _completed;
+
+    public CaptureFinalizationCleanup(params string[] ownedPaths)
+    {
+        foreach (var path in ownedPaths)
+        {
+            Track(path);
+        }
+    }
+
+    public void Track(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            _ownedPaths.Add(Path.GetFullPath(path));
+        }
+    }
+
+    public void Complete() => _completed = true;
+
+    public void Dispose()
+    {
+        if (_completed)
+        {
+            return;
+        }
+        foreach (var path in _ownedPaths)
+        {
+            CapturedAudio.TryDelete(path);
+        }
+    }
+}
