@@ -2,7 +2,7 @@ param(
     [string]$PublishDir = "",
     [string]$InstallerPath = "",
     [string]$CertificateThumbprint = "",
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "https://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"

@@ -1,6 +1,7 @@
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\Muesli",
-    [switch]$KeepUserData
+    [switch]$RemoveUserData,
+    [switch]$ForceUserDataRemoval
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,11 +24,25 @@ if (Test-Path $InstallDir) {
     Remove-Item -LiteralPath $InstallDir -Recurse -Force
 }
 
-if (-not $KeepUserData) {
+if ($RemoveUserData) {
     $appData = Join-Path $env:APPDATA "muesli"
     if (Test-Path $appData) {
-        Remove-Item -LiteralPath $appData -Recurse -Force
+        $confirmed = $ForceUserDataRemoval
+        if (-not $confirmed) {
+            Write-Warning "This permanently removes Muesli settings, history, logs, and retained recordings from '$appData'."
+            $answer = Read-Host "Type DELETE to confirm user-data removal"
+            $confirmed = $answer -ceq "DELETE"
+        }
+
+        if ($confirmed) {
+            Remove-Item -LiteralPath $appData -Recurse -Force
+            Write-Host "Muesli user data removed from $appData"
+        } else {
+            Write-Host "User-data removal was not confirmed. Data was preserved."
+        }
     }
+} else {
+    Write-Host "Muesli user data was preserved. Rerun with -RemoveUserData to request confirmed removal."
 }
 
 Write-Host "Muesli uninstalled."
