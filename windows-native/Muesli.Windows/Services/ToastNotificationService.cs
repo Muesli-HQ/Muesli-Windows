@@ -3,10 +3,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Interop;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using MediaBrushes = System.Windows.Media.Brushes;
 using MediaColor = System.Windows.Media.Color;
 using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
@@ -14,11 +15,12 @@ using WpfOrientation = System.Windows.Controls.Orientation;
 
 namespace Muesli.Windows.Services;
 
-public sealed class ToastNotificationService
+public sealed class ToastNotificationService : IDisposable
 {
     private const double CompactIdleWidth = 44;
     private const double CompactIdleHeight = 28;
     private const double DragThreshold = 10;
+    private const double ScreenEdgeMargin = 6;
     private static readonly MediaColor GlassColor = MediaColor.FromRgb(30, 30, 46);
     private readonly DispatcherTimer _timer = new();
     private Window? _window;
@@ -37,11 +39,13 @@ public sealed class ToastNotificationService
     private Func<Task>? _cancelRecording;
     private double? _savedLeft;
     private double? _savedTop;
+    private readonly List<Border> _recordingBars = [];
 
     public event EventHandler<IndicatorPositionChangedEventArgs>? PositionChanged;
 
     public ToastNotificationService()
     {
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         _timer.Tick += (_, _) =>
         {
             _timer.Stop();
@@ -105,8 +109,8 @@ public sealed class ToastNotificationService
 
     public void SetSavedPosition(double? left, double? top)
     {
-        _savedLeft = left;
-        _savedTop = top;
+        _savedLeft = left is not null && double.IsFinite(left.Value) ? left : null;
+        _savedTop = top is not null && double.IsFinite(top.Value) ? top : null;
     }
 
     public void SetIndicatorAnchor(string anchor, bool clearCustomPosition)
@@ -142,6 +146,36 @@ public sealed class ToastNotificationService
         _window?.Hide();
     }
 
+    public void UpdateRecordingLevel(float peak)
+    {
+        if (_window is null || _currentState != ToastState.Recording || _recordingBars.Count == 0)
+        {
+            return;
+        }
+
+        if (!_window.Dispatcher.CheckAccess())
+        {
+            _window.Dispatcher.BeginInvoke(() => UpdateRecordingLevel(peak));
+            return;
+        }
+
+        var normalized = Math.Clamp(Math.Sqrt(Math.Max(0, peak) * 8), 0.12, 1.0);
+        var weights = new[] { 0.62, 1.0, 0.84, 0.52 };
+        for (var index = 0; index < _recordingBars.Count; index++)
+        {
+            _recordingBars[index].Height = 3 + normalized * 9 * weights[index];
+        }
+    }
+
+    public void Dispose()
+    {
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        _timer.Stop();
+        _recordingBars.Clear();
+        _window?.Close();
+        _window = null;
+    }
+
     private void ShowIndicator(ToastState state, string title, string message, int durationMs)
     {
         if (state == ToastState.Idle && !_showIdleIndicator)
@@ -163,8 +197,19 @@ public sealed class ToastNotificationService
         _window.Width = size.Width;
         _window.Height = size.Height;
         _window.Content = CreateContent(state, title, message, _hovered);
-        PositionWindow(_window);
-        _window.Show();
+        if (!_window.IsVisible)
+        {
+            // Establish the Window's own PresentationSource before any mixed-DPI screen conversion.
+            // Zero opacity prevents a one-frame flash at WPF's provisional location.
+            _window.Opacity = 0;
+            _window.Show();
+            PositionWindow(_window);
+            _window.Opacity = 1;
+        }
+        else
+        {
+            PositionWindow(_window);
+        }
 
         if (durationMs > 0)
         {
@@ -186,7 +231,10 @@ public sealed class ToastNotificationService
             Focusable = false,
             ShowActivated = false,
             SnapsToDevicePixels = true,
-            UseLayoutRounding = true
+            UseLayoutRounding = true,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = 0,
+            Top = 0
         };
     }
 
@@ -232,7 +280,7 @@ public sealed class ToastNotificationService
         };
         window.MouseLeftButtonDown += (_, args) =>
         {
-            _dragStart = window.PointToScreen(args.GetPosition(window));
+            _dragStart = ScreenPixelsToDesktopDips(window, window.PointToScreen(args.GetPosition(window)));
             _dragWindowLeft = window.Left;
             _dragWindowTop = window.Top;
             _dragged = false;
@@ -245,7 +293,8 @@ public sealed class ToastNotificationService
                 return;
             }
 
-            var position = window.PointToScreen(args.GetPosition(window));
+            var screenPosition = window.PointToScreen(args.GetPosition(window));
+            var position = ScreenPixelsToDesktopDips(window, screenPosition);
             var dx = position.X - _dragStart.Value.X;
             var dy = position.Y - _dragStart.Value.Y;
             if (!_dragged && Math.Sqrt(dx * dx + dy * dy) < DragThreshold)
@@ -254,8 +303,13 @@ public sealed class ToastNotificationService
             }
 
             _dragged = true;
-            window.Left = Math.Round(_dragWindowLeft + dx);
-            window.Top = Math.Round(_dragWindowTop + dy);
+            var workArea = WorkAreaForScreenPoint(window, screenPosition);
+            var clamped = ClampWindowPosition(
+                workArea,
+                new System.Windows.Size(window.Width, window.Height),
+                new System.Windows.Point(_dragWindowLeft + dx, _dragWindowTop + dy));
+            window.Left = Math.Round(clamped.X);
+            window.Top = Math.Round(clamped.Y);
         };
         window.MouseLeftButtonUp += (_, args) =>
         {
@@ -299,7 +353,7 @@ public sealed class ToastNotificationService
         };
     }
 
-    private static FrameworkElement CreateContent(ToastState state, string title, string message, bool hovered)
+    private FrameworkElement CreateContent(ToastState state, string title, string message, bool hovered)
     {
         return state switch
         {
@@ -339,7 +393,7 @@ public sealed class ToastNotificationService
         return root;
     }
 
-    private static FrameworkElement CreateRecordingPill()
+    private FrameworkElement CreateRecordingPill()
     {
         var root = CreatePill(MediaColor.FromRgb(239, 68, 68), 0.85, 11, 0.16);
         root.Width = 76;
@@ -361,6 +415,7 @@ public sealed class ToastNotificationService
             HorizontalAlignment = WpfHorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
         };
+        _recordingBars.Clear();
         var heights = new[] { 5d, 10d, 10d, 5d };
         for (var i = 0; i < heights.Length; i++)
         {
@@ -373,14 +428,7 @@ public sealed class ToastNotificationService
                 Background = new SolidColorBrush(MediaColor.FromArgb(220, 255, 255, 255)),
                 VerticalAlignment = VerticalAlignment.Center
             };
-            bar.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation
-            {
-                From = Math.Max(4, heights[i] * 0.55),
-                To = heights[i],
-                Duration = TimeSpan.FromMilliseconds(260 + i * 60),
-                AutoReverse = true,
-                RepeatBehavior = RepeatBehavior.Forever
-            });
+            _recordingBars.Add(bar);
             waveform.Children.Add(bar);
         }
 
@@ -524,12 +572,27 @@ public sealed class ToastNotificationService
             _savedLeft is not null &&
             _savedTop is not null)
         {
-            window.Left = _savedLeft.Value - window.Width / 2;
-            window.Top = _savedTop.Value - window.Height / 2;
+            var savedCenterInPixels = DesktopDipsToScreenPixels(window, new System.Windows.Point(_savedLeft.Value, _savedTop.Value));
+            var workArea = WorkAreaForScreenPoint(window, savedCenterInPixels);
+            var clamped = ClampWindowPosition(
+                workArea,
+                new System.Windows.Size(window.Width, window.Height),
+                new System.Windows.Point(_savedLeft.Value - window.Width / 2, _savedTop.Value - window.Height / 2));
+            window.Left = Math.Round(clamped.X);
+            window.Top = Math.Round(clamped.Y);
+            var repairedLeft = window.Left + window.Width / 2;
+            var repairedTop = window.Top + window.Height / 2;
+            if (Math.Abs(repairedLeft - _savedLeft.Value) > 0.5 || Math.Abs(repairedTop - _savedTop.Value) > 0.5)
+            {
+                _savedLeft = repairedLeft;
+                _savedTop = repairedTop;
+                PositionChanged?.Invoke(this, new IndicatorPositionChangedEventArgs(repairedLeft, repairedTop));
+            }
             return;
         }
 
-        var area = SystemParameters.WorkArea;
+        // Anchored indicators follow the monitor containing the cursor; custom positions retain their saved-monitor clamp above.
+        var area = WindowPlacementService.GetWorkAreaForCursor(window);
         var anchor = _indicatorAnchor.Trim();
         var left = anchor switch
         {
@@ -546,6 +609,57 @@ public sealed class ToastNotificationService
 
         window.Left = Math.Round(left);
         window.Top = Math.Round(top);
+    }
+
+    internal static System.Windows.Point ClampWindowPosition(
+        Rect workArea,
+        System.Windows.Size windowSize,
+        System.Windows.Point requested,
+        double margin = ScreenEdgeMargin)
+    {
+        var minimumLeft = workArea.Left + margin;
+        var maximumLeft = workArea.Right - windowSize.Width - margin;
+        var minimumTop = workArea.Top + margin;
+        var maximumTop = workArea.Bottom - windowSize.Height - margin;
+        var left = maximumLeft >= minimumLeft
+            ? Math.Clamp(requested.X, minimumLeft, maximumLeft)
+            : workArea.Left + Math.Max(0, (workArea.Width - windowSize.Width) / 2);
+        var top = maximumTop >= minimumTop
+            ? Math.Clamp(requested.Y, minimumTop, maximumTop)
+            : workArea.Top + Math.Max(0, (workArea.Height - windowSize.Height) / 2);
+        return new System.Windows.Point(left, top);
+    }
+
+    private static Rect WorkAreaForScreenPoint(Window window, System.Windows.Point screenPointPixels)
+    {
+        var screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(
+            (int)Math.Round(screenPointPixels.X),
+            (int)Math.Round(screenPointPixels.Y)));
+        var area = screen.WorkingArea;
+        var topLeft = ScreenPixelsToDesktopDips(window, new System.Windows.Point(area.Left, area.Top));
+        var bottomRight = ScreenPixelsToDesktopDips(window, new System.Windows.Point(area.Right, area.Bottom));
+        return new Rect(topLeft, bottomRight);
+    }
+
+    private static System.Windows.Point ScreenPixelsToDesktopDips(Window window, System.Windows.Point screenPointPixels)
+    {
+        var relative = window.PointFromScreen(screenPointPixels);
+        return new System.Windows.Point(window.Left + relative.X, window.Top + relative.Y);
+    }
+
+    private static System.Windows.Point DesktopDipsToScreenPixels(Window window, System.Windows.Point desktopPoint)
+    {
+        return window.PointToScreen(new System.Windows.Point(desktopPoint.X - window.Left, desktopPoint.Y - window.Top));
+    }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs eventArgs)
+    {
+        var window = _window;
+        if (window is null) return;
+        window.Dispatcher.BeginInvoke(() =>
+        {
+            if (window.IsVisible) PositionWindow(window);
+        });
     }
 
     private static double CenteredLeft(Rect area, double width)

@@ -27,14 +27,11 @@ public static class StartupRegistrationService
 
     public static string DescribeState()
     {
-        if (!IsEnabled())
-        {
-            return "Not registered to start with Windows.";
-        }
-
-        return IsRegisteredForBackgroundLaunch()
-            ? "Starts with Windows in the background."
-            : "Starts with Windows.";
+        var command = GetRegisteredCommand();
+        if (string.IsNullOrWhiteSpace(command)) return "Disabled in Windows";
+        return command.Contains("--background", StringComparison.OrdinalIgnoreCase)
+            ? "Enabled for background launch"
+            : "Enabled, but needs background-launch repair";
     }
 
     public static void SetEnabled(bool enabled)
