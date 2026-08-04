@@ -6425,6 +6425,50 @@ private static string DescribeAutomationResult(PostMeetingAutomationResult resul
         _ => $"{export}{result.Error ?? "Post-meeting automation failed; the meeting remains saved."}"
     };
 }
+
+private PostMeetingAutomationOptions CurrentPostMeetingAutomationOptions() => new()
+{
+    HookEnabled = PostMeetingHookEnabled,
+    HookExecutablePath = PostMeetingHookExecutablePath,
+    AutoExportEnabled = AutoExportMarkdownEnabled,
+    AutoExportDirectory = AutoExportMarkdownDirectory,
+    AutoExportMode = AutoExportContentSetting(SelectedAutoExportContent) switch
+    {
+        "transcript" => MeetingExportMode.Transcript,
+        "full-meeting" => MeetingExportMode.FullMeeting,
+        _ => MeetingExportMode.Notes
+    },
+    TranscriptPolicy = HookTranscriptPolicySetting(SelectedHookTranscriptPolicy) switch
+    {
+        "inline" => PostMeetingTranscriptPolicy.Inline,
+        "auto-export-path" => PostMeetingTranscriptPolicy.AutoExportPath,
+        _ => PostMeetingTranscriptPolicy.MetadataOnly
+    },
+    Timeout = TimeSpan.FromSeconds(Math.Clamp(PostMeetingHookTimeoutSeconds, 1, 600)),
+    RetryPolicy = new PostMeetingRetryPolicy
+    {
+        MaxAttempts = Math.Clamp(PostMeetingHookMaxAttempts, 1, 3),
+        Delay = TimeSpan.FromMilliseconds(500)
+    }
+};
+
+private static string DescribeAutomationResult(PostMeetingAutomationResult result)
+{
+    var export = result.Export.Completed
+        ? "Markdown exported. "
+        : result.Export.Requested
+            ? "Markdown export failed. "
+            : "";
+    return result.Status switch
+    {
+        PostMeetingAutomationStatus.Disabled => "Automation is disabled; no process was launched and no export was written.",
+        PostMeetingAutomationStatus.Succeeded => $"{export}Post-meeting automation completed safely.",
+        PostMeetingAutomationStatus.TimedOut => $"{export}The hook timed out and its process tree was terminated.",
+        PostMeetingAutomationStatus.Cancelled => $"{export}Post-meeting automation was cancelled and its process tree was terminated.",
+        PostMeetingAutomationStatus.InvalidConfiguration => $"{export}{result.Error ?? "Automation is disabled until its path is fixed."}",
+        _ => $"{export}{result.Error ?? "Post-meeting automation failed; the meeting remains saved."}"
+    };
+}
 private void OnIndicatorPositionChanged(object? sender, IndicatorPositionChangedEventArgs e)
 {
     _indicatorLeft = e.Left;
