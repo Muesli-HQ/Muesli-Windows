@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <ProjectReference Include="..\Muesli.Windows\Muesli.Windows.csproj" />
+    <ProjectReference Include="..\Muesli.Automation.TestHost\Muesli.Automation.TestHost.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyAutomationTestHost" AfterTargets="Build">
+    <ItemGroup>
+      <_AutomationTestHostFile Include="..\Muesli.Automation.TestHost\bin\$(Configuration)\net8.0\*.*" />
+    </ItemGroup>
+    <MakeDir Directories="$(OutDir)AutomationTestHost" />
+    <Copy SourceFiles="@(_AutomationTestHostFile)" DestinationFolder="$(OutDir)AutomationTestHost" />
+  </Target>
+</Project>
