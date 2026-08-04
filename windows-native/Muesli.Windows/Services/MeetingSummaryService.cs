@@ -186,27 +186,55 @@ public static class MeetingSummaryService
         return builder.ToString().Trim();
     }
 
-    public static async Task<string> CreateSummaryAsync(string transcript, string meetingTitle, MuesliSettings settings)
+    public static async Task<string> CreateSummaryAsync(
+        string transcript,
+        string meetingTitle,
+        MuesliSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        return (await CreateSummaryResultAsync(transcript, meetingTitle, settings, cancellationToken)).Summary;
+    }
+
+    public static async Task<SummaryGenerationResult> CreateSummaryResultAsync(
+        string transcript,
+        string meetingTitle,
+        MuesliSettings settings,
+        CancellationToken cancellationToken = default,
+        HttpClient? httpClient = null)
     {
         if (string.IsNullOrWhiteSpace(transcript))
         {
-            return "";
+            return new SummaryGenerationResult("", "local", false, null);
         }
 
         var provider = settings.MeetingSummaryProvider.Trim().ToLowerInvariant();
-        var localTemplate = EffectiveLocalTemplate(settings, meetingTitle, transcript);
         try
         {
-            return provider switch
+            var summary = provider switch
             {
-                "openai" => await SummarizeWithOpenAIAsync(transcript, meetingTitle, settings),
-                "openrouter" => await SummarizeWithOpenRouterAsync(transcript, meetingTitle, settings),
+                "openai" => await SummarizeWithOpenAIAsync(transcript, meetingTitle, settings, httpClient ?? Http, cancellationToken),
+                "openrouter" => await SummarizeWithOpenRouterAsync(transcript, meetingTitle, settings, httpClient ?? Http, cancellationToken),
+                "ollama" => await SummarizeWithOllamaAsync(transcript, meetingTitle, settings, httpClient ?? Http, cancellationToken),
                 _ => CreateLocalSummary(transcript, meetingTitle, settings)
             };
+            return new SummaryGenerationResult(
+                summary,
+                provider is "openai" or "openrouter" or "ollama" ? provider : "local",
+                false,
+                null);
         }
-        catch
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return CreateLocalSummary(transcript, meetingTitle, settings);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var fallback = CreateLocalSummary(transcript, meetingTitle, settings);
+            var reason = exception is SummaryProviderException providerException
+                ? providerException.SafeReason
+                : exception is TaskCanceledException ? "timeout"
+                : exception is JsonException ? "malformed-response" : "provider-error";
+            return new SummaryGenerationResult(fallback, provider, true, reason);
         }
     }
 
@@ -237,17 +265,22 @@ public static class MeetingSummaryService
             : SummaryInstructions(NormalizeTemplateName(settings.MeetingSummaryTemplate));
     }
 
-    private static async Task<string> SummarizeWithOpenAIAsync(string transcript, string meetingTitle, MuesliSettings settings)
+    private static async Task<string> SummarizeWithOpenAIAsync(
+        string transcript,
+        string meetingTitle,
+        MuesliSettings settings,
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
     {
         var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            apiKey = settings.OpenAIApiKey;
+            apiKey = settings.ResolvedOpenAIApiKey;
         }
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
+            throw new SummaryProviderException("missing-key");
         }
 
         var model = string.IsNullOrWhiteSpace(settings.OpenAIModel) ? "gpt-5.4-mini" : settings.OpenAIModel;
@@ -268,29 +301,92 @@ public static class MeetingSummaryService
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Content = JsonContent(body);
 
-        using var response = await Http.SendAsync(request);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
+            throw new SummaryProviderException($"http-{(int)response.StatusCode}");
         }
 
-        var json = await response.Content.ReadAsStringAsync();
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var document = JsonDocument.Parse(json);
         var text = ExtractOpenAIText(document.RootElement);
-        return string.IsNullOrWhiteSpace(text) ? CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript)) : text.Trim();
+        return string.IsNullOrWhiteSpace(text)
+            ? throw new SummaryProviderException("empty-response")
+            : text.Trim();
     }
 
-    private static async Task<string> SummarizeWithOpenRouterAsync(string transcript, string meetingTitle, MuesliSettings settings)
+    /// <summary>
+    /// Ollama's local chat contract: POST {endpoint}/api/chat with stream disabled, and read
+    /// message.content. No credential is involved, so nothing here may be stored or logged as one.
+    /// </summary>
+    private static async Task<string> SummarizeWithOllamaAsync(
+        string transcript,
+        string meetingTitle,
+        MuesliSettings settings,
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = string.IsNullOrWhiteSpace(settings.OllamaEndpoint)
+            ? "http://localhost:11434"
+            : settings.OllamaEndpoint.Trim();
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var baseUri) ||
+            (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new SummaryProviderException("invalid-endpoint");
+        }
+
+        var model = string.IsNullOrWhiteSpace(settings.OllamaModel) ? "llama3.1:8b" : settings.OllamaModel.Trim();
+        var body = new
+        {
+            model,
+            stream = false,
+            messages = new object[]
+            {
+                new { role = "system", content = EffectiveSystemPrompt(settings) },
+                new { role = "user", content = SummaryUserPrompt(transcript, meetingTitle) }
+            }
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseUri, "/api/chat"));
+        request.Content = JsonContent(body);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            // A stopped daemon and a missing model are the two failures users actually hit.
+            throw new SummaryProviderException(
+                response.StatusCode == System.Net.HttpStatusCode.NotFound
+                    ? "model-not-installed"
+                    : $"http-{(int)response.StatusCode}");
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var document = JsonDocument.Parse(json);
+        var text = document.RootElement.TryGetProperty("message", out var message) &&
+                   message.TryGetProperty("content", out var content)
+            ? content.GetString()
+            : null;
+        return string.IsNullOrWhiteSpace(text)
+            ? throw new SummaryProviderException("empty-response")
+            : text.Trim();
+    }
+
+    private static async Task<string> SummarizeWithOpenRouterAsync(
+        string transcript,
+        string meetingTitle,
+        MuesliSettings settings,
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
     {
         var apiKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            apiKey = settings.OpenRouterApiKey;
+            apiKey = settings.ResolvedOpenRouterApiKey;
         }
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
+            throw new SummaryProviderException("missing-key");
         }
 
         var model = string.IsNullOrWhiteSpace(settings.OpenRouterModel)
@@ -312,16 +408,18 @@ public static class MeetingSummaryService
         request.Headers.TryAddWithoutValidation("X-OpenRouter-Title", "Muesli Windows");
         request.Content = JsonContent(body);
 
-        using var response = await Http.SendAsync(request);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript));
+            throw new SummaryProviderException($"http-{(int)response.StatusCode}");
         }
 
-        var json = await response.Content.ReadAsStringAsync();
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var document = JsonDocument.Parse(json);
         var text = ExtractOpenRouterText(document.RootElement);
-        return string.IsNullOrWhiteSpace(text) ? CreateSummary(transcript, meetingTitle, EffectiveLocalTemplate(settings, meetingTitle, transcript)) : text.Trim();
+        return string.IsNullOrWhiteSpace(text)
+            ? throw new SummaryProviderException("empty-response")
+            : text.Trim();
     }
 
     private static StringContent JsonContent<T>(T value)
@@ -1091,4 +1189,21 @@ public static class MeetingSummaryService
         List<string> Today,
         List<string> Updates,
         List<string> Impact);
+}
+
+public sealed record SummaryGenerationResult(
+    string Summary,
+    string Provider,
+    bool UsedLocalFallback,
+    string? SafeFailureReason);
+
+public sealed class SummaryProviderException : Exception
+{
+    public SummaryProviderException(string safeReason)
+        : base("The selected summary provider could not produce notes.")
+    {
+        SafeReason = safeReason;
+    }
+
+    public string SafeReason { get; }
 }

@@ -46,8 +46,11 @@ public sealed class MeetingPromptService
             _autoDismiss = null;
             Dismiss(ignore);
         });
-        PositionWindow(_window);
+        // Showing at zero opacity first creates a real PresentationSource/HWND.  Placement
+        // then uses the cursor monitor with finite WPF screen conversion on mixed-DPI desktops.
+        _window.Opacity = 0;
         _window.Show();
+        PositionWindow(_window);
         AnimateIn(_window);
     }
 
@@ -85,12 +88,13 @@ public sealed class MeetingPromptService
 
         var window = _window;
         _window = null;
-        window.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation
+        if (!AnimationsEnabled)
         {
-            From = window.Opacity,
-            To = 0,
-            Duration = TimeSpan.FromMilliseconds(160)
-        });
+            window.Close();
+            afterClose?.Invoke();
+            return;
+        }
+        window.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation { From = window.Opacity, To = 0, Duration = TimeSpan.FromMilliseconds(160) });
 
         var closeTimer = new System.Windows.Threading.DispatcherTimer
         {
@@ -218,7 +222,10 @@ public sealed class MeetingPromptService
                 {
                     OpenMeetingUrl(meeting.BrowserUrl);
                     dismiss();
-                });
+                },
+                // Record Only: the user is already in the meeting and wants capture without
+                // Muesli opening a second copy of it in the browser.
+                record);
             split.HorizontalAlignment = System.Windows.HorizontalAlignment.Left;
             split.VerticalAlignment = VerticalAlignment.Center;
             actions.Children.Add(split);
@@ -238,20 +245,29 @@ public sealed class MeetingPromptService
         closeButton.VerticalAlignment = VerticalAlignment.Top;
         actions.Children.Add(closeButton);
 
-        var shrink = new DoubleAnimation
+        if (!AnimationsEnabled)
         {
-            From = PromptWidth,
-            To = 0,
-            Duration = new Duration(DismissDuration),
-            FillBehavior = FillBehavior.Stop
-        };
-        shrink.Completed += (_, _) =>
+            var dismissTimer = new System.Windows.Threading.DispatcherTimer { Interval = DismissDuration };
+            dismissTimer.Tick += (_, _) =>
+            {
+                dismissTimer.Stop();
+                var action = _autoDismiss;
+                _autoDismiss = null;
+                Dismiss(action);
+            };
+            dismissTimer.Start();
+        }
+        else
         {
-            var action = _autoDismiss;
-            _autoDismiss = null;
-            Dismiss(action);
-        };
-        progress.BeginAnimation(FrameworkElement.WidthProperty, shrink);
+            var shrink = new DoubleAnimation { From = PromptWidth, To = 0, Duration = new Duration(DismissDuration), FillBehavior = FillBehavior.Stop };
+            shrink.Completed += (_, _) =>
+            {
+                var action = _autoDismiss;
+                _autoDismiss = null;
+                Dismiss(action);
+            };
+            progress.BeginAnimation(FrameworkElement.WidthProperty, shrink);
+        }
 
         return root;
     }
@@ -275,11 +291,10 @@ public sealed class MeetingPromptService
             }
         }
 
-        var accent = platform.Contains("Meet", StringComparison.OrdinalIgnoreCase)
-            ? MediaColor.FromRgb(52, 211, 153)
-            : platform.Contains("Teams", StringComparison.OrdinalIgnoreCase)
-                ? MediaColor.FromRgb(107, 163, 247)
-                : MediaColor.FromRgb(90, 164, 255);
+        // Every supported platform gets its own accent and glyph from the shared badge registry,
+        // so Zoom, Webex, Chime, and FaceTime are distinguishable rather than sharing one blue.
+        var badge = MeetingPlatformBadges.For(platform);
+        var accent = (MediaColor)System.Windows.Media.ColorConverter.ConvertFromString(badge.AccentHex);
 
         return new Border
         {
@@ -288,9 +303,10 @@ public sealed class MeetingPromptService
             CornerRadius = new CornerRadius(7),
             VerticalAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(MediaColor.FromArgb(32, accent.R, accent.G, accent.B)),
+            ToolTip = badge.Platform,
             Child = new TextBlock
             {
-                Text = PlatformGlyph(platform),
+                Text = badge.Glyph,
                 FontFamily = new System.Windows.Media.FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
                 FontSize = 14,
                 Foreground = new SolidColorBrush(accent),
@@ -351,7 +367,7 @@ public sealed class MeetingPromptService
         return button;
     }
 
-    private static Grid CreateJoinSplitButton(Action joinAndRecord, Action joinOnly)
+    private static Grid CreateJoinSplitButton(Action joinAndRecord, Action joinOnly, Action recordOnly)
     {
         var root = new Grid
         {
@@ -398,9 +414,12 @@ public sealed class MeetingPromptService
         chevron.MouseLeftButtonUp += (_, _) =>
         {
             var menu = new ContextMenu();
-            var item = new MenuItem { Header = "Join Only" };
-            item.Click += (_, _) => joinOnly();
-            menu.Items.Add(item);
+            var joinOnlyItem = new MenuItem { Header = "Join Only" };
+            joinOnlyItem.Click += (_, _) => joinOnly();
+            menu.Items.Add(joinOnlyItem);
+            var recordOnlyItem = new MenuItem { Header = "Record Only" };
+            recordOnlyItem.Click += (_, _) => recordOnly();
+            menu.Items.Add(recordOnlyItem);
             menu.PlacementTarget = chevron;
             menu.IsOpen = true;
         };
@@ -433,7 +452,7 @@ public sealed class MeetingPromptService
 
     private static void PositionWindow(Window window)
     {
-        var area = SystemParameters.WorkArea;
+        var area = WindowPlacementService.GetWorkAreaForCursor(window);
         window.Left = Math.Round(area.Right - PromptWidth - ScreenMargin);
         window.Top = Math.Round(area.Top + ScreenMargin);
     }
@@ -459,8 +478,15 @@ public sealed class MeetingPromptService
         }
     }
 
+    internal static bool AnimationsEnabled => SystemParameters.ClientAreaAnimation;
+
     private static void AnimateIn(Window window)
     {
+        if (!AnimationsEnabled)
+        {
+            window.Opacity = 1;
+            return;
+        }
         window.Opacity = 0;
         window.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation
         {
