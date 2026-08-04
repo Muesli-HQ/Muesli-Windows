@@ -6,6 +6,8 @@ namespace Muesli.Windows.Services;
 
 public sealed class AudioCaptureService : IDisposable
 {
+    public const string SystemDefaultMicrophone = "System default microphone";
+
     private readonly MMDeviceEnumerator _deviceEnumerator = new();
     private WasapiCapture? _capture;
     private WaveFileWriter? _writer;
