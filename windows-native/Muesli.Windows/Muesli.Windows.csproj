@@ -9,8 +9,37 @@
     <AssemblyName>Muesli</AssemblyName>
     <RootNamespace>Muesli.Windows</RootNamespace>
     <Version>0.2.0</Version>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
+    <InformationalVersion>0.2.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyTitle>Muesli for Windows</AssemblyTitle>
+    <ApplicationIcon>Assets\muesli.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>Muesli for Windows</Product>
+    <Company>Muesli contributors</Company>
+    <Description>Local-first dictation and meeting transcription for Windows</Description>
+    <Copyright>Copyright © Muesli contributors</Copyright>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>Muesli.Windows.Tests</_Parameter1>
+    </AssemblyAttribute>
+    <Content Include="..\..\docs\WINDOWS_PRIVACY.md">
+      <Link>WINDOWS-PRIVACY.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\docs\POST_MEETING_AUTOMATION.md">
+      <Link>POST-MEETING-AUTOMATION.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\docs\COMPUTER_USE.md">
+      <Link>COMPUTER-USE.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <PackageReference Include="LLamaSharp" Version="0.27.0" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
@@ -19,11 +48,6 @@
     <PackageReference Include="SharpCompress" Version="0.48.1" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\..\worker\**\*">
-      <Link>worker\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
     <Content Include="Assets\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
