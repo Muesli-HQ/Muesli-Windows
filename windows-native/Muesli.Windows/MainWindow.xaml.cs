@@ -668,6 +668,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public static Window CreateVisualPreview(Phase12PreviewMode mode) => new MainWindow();
+
     public MainWindow()
     {
         _meetingRecordingCoordinator = new(_logService);
