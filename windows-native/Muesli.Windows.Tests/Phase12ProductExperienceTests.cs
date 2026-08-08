@@ -346,7 +346,11 @@ public sealed class Phase12ProductExperienceTests
     {
         var root = FindRepositoryRoot();
         var placement = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Services", "WindowPlacementService.cs"));
-        var toast = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Services", "ToastNotificationService.cs"));
+        // Git checks these files out with CRLF on Windows (core.autocrlf), so the ordering
+        // assertions below must compare against normalised line endings rather than failing
+        // on a clean clone.
+        var toast = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Services", "ToastNotificationService.cs"))
+            .Replace("\r\n", "\n");
         Assert.Contains("GetConnectedPresentationSource(window)?.CompositionTarget", placement);
         Assert.Contains("PresentationSource.FromVisual(window) as HwndSource", placement);
         Assert.Contains("HwndSource.FromHwnd(handle)", placement);
