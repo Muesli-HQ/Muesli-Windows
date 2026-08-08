@@ -24,6 +24,7 @@ public sealed class ToastNotificationService : IDisposable
     private static readonly MediaColor GlassColor = MediaColor.FromRgb(30, 30, 46);
     private readonly DispatcherTimer _timer = new();
     private Window? _window;
+    private bool _disposed;
     private string _idleHotkey = "F8";
     private bool _idleVisible;
     private bool _showIdleIndicator = true;
@@ -49,6 +50,10 @@ public sealed class ToastNotificationService : IDisposable
         _timer.Tick += (_, _) =>
         {
             _timer.Stop();
+            if (_disposed)
+            {
+                return;
+            }
             if (_idleVisible)
             {
                 ShowIdle(_idleHotkey);
@@ -169,11 +174,30 @@ public sealed class ToastNotificationService : IDisposable
 
     public void Dispose()
     {
+        // Set before stopping the timer: Stop() does not cancel a tick already queued on the
+        // dispatcher, so the handler can still run once after this point and must no-op.
+        _disposed = true;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _timer.Stop();
         _recordingBars.Clear();
-        _window?.Close();
+        if (_window is not null)
+        {
+            _window.Closed -= OnIndicatorWindowClosed;
+            _window.Close();
+        }
         _window = null;
+    }
+
+    private void OnIndicatorWindowClosed(object? sender, EventArgs e)
+    {
+        if (sender is Window closed)
+        {
+            closed.Closed -= OnIndicatorWindowClosed;
+        }
+        if (ReferenceEquals(_window, sender))
+        {
+            _window = null;
+        }
     }
 
     private void ShowIndicator(ToastState state, string title, string message, int durationMs)
@@ -183,7 +207,19 @@ public sealed class ToastNotificationService : IDisposable
             return;
         }
 
-        _window ??= CreateWindow();
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (_window is null)
+        {
+            _window = CreateWindow();
+            // WPF closes every window during application shutdown, which would otherwise leave this
+            // field pointing at a closed instance. Show() on a closed Window throws, and from a
+            // DispatcherTimer tick that surfaces as an unhandled UI exception.
+            _window.Closed += OnIndicatorWindowClosed;
+        }
         EnsureMouseHandlers(_window);
         if (state != ToastState.Idle)
         {

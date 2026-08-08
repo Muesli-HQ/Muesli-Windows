@@ -7,6 +7,7 @@ public sealed class DictationCoordinator : IDisposable
     private readonly NativeTranscriptionClient _transcriptionClient;
     private readonly AudioCaptureService _audioCaptureService = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private int _disposed;
     private Task<TranscriptionResult>? _activeTranscriptionTask;
 
     public bool IsRecording { get; private set; }
@@ -35,6 +36,12 @@ public sealed class DictationCoordinator : IDisposable
 
     public async Task StartAsync(string? microphoneName)
     {
+        // The global hotkey outlives this coordinator during shutdown. Without this guard every
+        // keypress awaits a disposed semaphore and logs an ObjectDisposedException.
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
         await _gate.WaitAsync();
         try
         {
@@ -232,6 +239,10 @@ public sealed class DictationCoordinator : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
         _audioCaptureService.DeviceListChanged -= OnDeviceListChanged;
         _audioCaptureService.RouteChanged -= OnRouteChanged;
         _audioCaptureService.LevelChanged -= OnLevelChanged;
