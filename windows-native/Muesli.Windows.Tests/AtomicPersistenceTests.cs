@@ -81,15 +81,26 @@ public sealed class AtomicPersistenceTests
         using var directory = new TestDirectory();
         var path = directory.File("locked.json");
         new AtomicJsonFile().Save(path, new[] { "valid" });
-        var exclusiveStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+        using var exclusiveStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
         var release = Task.Run(async () =>
         {
             await Task.Delay(40);
             exclusiveStream.Dispose();
         });
 
-        var result = new AtomicJsonFile().Load(path, Array.Empty<string>());
-        await release;
+        AtomicJsonLoadResult<string[]> result;
+        try
+        {
+            result = new AtomicJsonFile().Load(path, Array.Empty<string>());
+        }
+        finally
+        {
+            // Always close the lock and join its releasing task before the temporary directory is
+            // torn down. This keeps a failed assertion or retry exhaustion from leaking the handle
+            // into TestDirectory.Dispose on slower Windows CI workers.
+            exclusiveStream.Dispose();
+            await release;
+        }
 
         Assert.Equal(["valid"], result.Value);
         Assert.False(result.HadCorruption);
@@ -182,6 +193,8 @@ public sealed class AtomicPersistenceTests
 
 internal sealed class TestDirectory : IDisposable
 {
+    private const int DeleteAttemptCount = 5;
+
     public TestDirectory()
     {
         Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"muesli-tests-{Guid.NewGuid():N}");
@@ -190,5 +203,29 @@ internal sealed class TestDirectory : IDisposable
 
     public string Path { get; }
     public string File(string name) => System.IO.Path.Combine(Path, name);
-    public void Dispose() => Directory.Delete(Path, recursive: true);
+
+    public void Dispose()
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(Path))
+                {
+                    Directory.Delete(Path, recursive: true);
+                }
+
+                return;
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException &&
+                attempt < DeleteAttemptCount)
+            {
+                // Windows can report a just-closed file handle as busy for a short interval. Retry
+                // that transient condition, but let the final failure escape so genuine resource
+                // leaks remain visible to the test suite.
+                Thread.Sleep(50 * attempt);
+            }
+        }
+    }
 }
