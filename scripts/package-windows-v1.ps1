@@ -256,6 +256,14 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Destinat
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination (Join-Path $publishDir "uninstall-windows.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination (Join-Path $publishDir "THIRD-PARTY-NOTICES.md") -Force
 Copy-Item -LiteralPath (Join-Path $root "licenses") -Destination (Join-Path $publishDir "licenses") -Recurse -Force
+$inventoryPath = Join-Path $artifactsDir "native-runtime-inventory.json"
+& (Join-Path $PSScriptRoot "generate-native-runtime-inventory.ps1") `
+    -PackageDirectory $publishDir `
+    -OutputPath $inventoryPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Native-runtime inventory generation failed."
+}
+Copy-Item -LiteralPath $inventoryPath -Destination (Join-Path $publishDir "native-runtime-inventory.json") -Force
 Set-Content -LiteralPath $lastPublishFile -Value $publishDir -Encoding UTF8
 
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath

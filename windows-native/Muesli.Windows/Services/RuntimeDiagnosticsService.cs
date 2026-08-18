@@ -47,6 +47,9 @@ public sealed class RuntimeDiagnosticsService
         var totalBytes = transcriptionBytes + streamingBytes + cleanupBytes + NativeDiarizationClient.ModelCacheSizeBytes();
         var runtimeReady = NativeParakeetClient.IsRuntimeAvailable;
 
+        var packageTruth = NativeSherpaRuntime.IsCudaCapable
+            ? "CUDA is active from an externally staged matching bundle. The public Wave 0 package still does not ship NVIDIA libraries."
+            : PublicNativePackageContract.PublicPackageDisclosure;
         var detail = string.Join(
             Environment.NewLine,
             $"Dictation model: {dictationModel.DisplayName} ({dictationModel.Id}) · {dictationStatus}",
@@ -58,6 +61,7 @@ public sealed class RuntimeDiagnosticsService
             $"Execution provider: {provider}",
             $"Device: {(provider.Equals("cuda", StringComparison.OrdinalIgnoreCase) ? "cuda" : "cpu")}",
             "Compute type: native ONNX",
+            $"Package truth: {packageTruth}",
             $"Sherpa runtime diagnostic: {NativeSherpaRuntime.Diagnostic}",
             $"Speaker diarization: {diarizationStatus}",
             $"Local cleanup: {cleanupStatus}");

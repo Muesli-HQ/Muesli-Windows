@@ -21,12 +21,27 @@ does not replace the applicable license texts in `licenses/` or upstream terms.
 QuestPDF's redistributed native/content dependencies in this package include:
 
 - Skia: Copyright Google Inc. and contributors; BSD 3-Clause license;
-  https://skia.org/; text in `licenses/BSD-3-Clause.txt`.
+  https://skia.org/; text in `licenses/BSD-3-Clause.txt` and
+  `licenses/QuestPDF-native/skia.txt`.
 - qpdf: Copyright Jay Berkenbilt and contributors; Apache License 2.0;
-  https://github.com/qpdf/qpdf; text in `licenses/Apache-2.0.txt`.
+  https://github.com/qpdf/qpdf; text in `licenses/Apache-2.0.txt` and
+  `licenses/QuestPDF-native/qpdf.txt`.
+- zlib: Copyright Jean-loup Gailly and Mark Adler; zlib license;
+  text in `licenses/Zlib.txt`.
+- MinGW-w64 winpthread (`libwinpthread-1.dll`): MIT;
+  text in `licenses/MinGW-w64-winpthread-MIT.txt`.
+- GCC runtime support (`libgcc_s_seh-1.dll`, `libstdc++-6.dll`): GPLv3 with
+  the GCC Runtime Library Exception 3.1;
+  text in `licenses/GCC-Runtime-Library-Exception-3.1.txt`.
+- Additional Skia/qpdf bundled notices (harfbuzz, libpng, libjpeg-turbo,
+  libwebp, expat, wuffs, libgrapheme, emsdk): `licenses/QuestPDF-native/`.
 - Lato font: Copyright 2010-2014 Łukasz Dziedzic and contributors; SIL Open Font
   License 1.1; https://www.latofonts.com/; the upstream `LatoFont/OFL.txt` is
   also retained verbatim in the published package.
+
+QuestPDF community-license eligibility is a Phase 13 / EXP-01 release-owner
+check. This repository records that the build selects `LicenseType.Community`
+and does not declare that the distributing entity is eligible.
 
 ### NAudio 2.2.1
 
@@ -68,6 +83,17 @@ QuestPDF's redistributed native/content dependencies in this package include:
 - License: MIT.
 - Use: native ONNX model execution redistributed through sherpa-onnx runtime assets.
 - Included text: `licenses/MIT.txt`.
+
+### Microsoft.Data.Sqlite 10.0.11 and SQLitePCLRaw 2.1.12
+
+- Copyright: Microsoft Corporation and contributors; Eric Sink / SourceGear, LLC
+  (SQLitePCLRaw); SQLite authors (native amalgamation).
+- Sources: https://github.com/dotnet/efcore and https://github.com/ericsink/SQLitePCL.raw
+- Licenses: MIT (`Microsoft.Data.Sqlite`), Apache License 2.0 (`SQLitePCLRaw.lib.e_sqlite3`),
+  and the SQLite public-domain blessing for `e_sqlite3.dll`.
+- Use: local SQLite persistence.
+- Included text: `licenses/MIT.txt`, `licenses/Apache-2.0.txt`,
+  `licenses/SQLite-blessing.txt`.
 
 ### Microsoft .NET runtime and managed support libraries
 
@@ -144,13 +170,28 @@ download.
   k2-fsa release.
 - Included text: `licenses/CC-BY-4.0.txt`.
 
-## Optional NVIDIA acceleration dependencies
+## Optional NVIDIA acceleration dependencies (not in the public package)
 
-The primary Muesli package includes the version-matched sherpa-onnx CUDA provider, but it
-does not bundle the NVIDIA CUDA Toolkit or cuDNN dependency DLLs. The optional
-`install-parakeet-cuda-runtime.ps1` script copies selected CUDA 12 DLLs from the user's
-existing CUDA Toolkit installation and downloads the pinned official cuDNN 9.10.2.21
-archive directly from NVIDIA over HTTPS after the user runs the script.
+Public Wave 0 package includes the CPU Sherpa provider only. NVIDIA CUDA is not
+included. A version-matched CUDA provider is optional external staging and is not
+shipped until L11 qualifies it.
+
+The public package does **not** include the version-matched sherpa-onnx CUDA
+provider, the NVIDIA CUDA Toolkit, cuDNN, or `onnxruntime_providers_cuda.dll`.
+
+CUDA remains optional external staging. `scripts/install-parakeet-cuda-runtime.ps1`
+and any matching sherpa-onnx CUDA bundle are **not shipped** in the ZIP or installer
+until module L11 acquires, packages, and qualifies a version-matched provider.
+Until then:
+
+- do not describe the public or primary package as CUDA-capable or NVIDIA-accelerated;
+- an incomplete or unmanifested CUDA directory must be rejected at runtime;
+- NVIDIA DLLs must not appear in the public package inventory.
+
+If a later release stages a complete matching bundle, that work is L11. The optional
+staging script copies selected CUDA 12 DLLs from a user-installed CUDA Toolkit and
+can download the pinned official cuDNN 9.10.2.21 archive from NVIDIA over HTTPS after
+the user runs the script. That path is opt-in and is not a public-package feature.
 
 CUDA Toolkit and cuDNN are governed by NVIDIA's applicable license terms, not by an
 open-source license in this repository. Users and distributors must review and accept the

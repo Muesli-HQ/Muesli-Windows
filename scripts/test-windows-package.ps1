@@ -48,6 +48,11 @@ $required = @(
     "licenses\CC-BY-4.0.txt",
     "licenses\OFL-1.1.txt",
     "licenses\QuestPDF-2026.5.0.md",
+    "licenses\Zlib.txt",
+    "licenses\SQLite-blessing.txt",
+    "licenses\GCC-Runtime-Library-Exception-3.1.txt",
+    "licenses\MinGW-w64-winpthread-MIT.txt",
+    "native-runtime-inventory.json",
     "install-windows.ps1",
     "uninstall-windows.ps1",
     "Assets\menu_m_template@2x.png"
@@ -132,6 +137,40 @@ Assert-NativeRuntimeFile -Pattern "sherpa-onnx-c-api.dll" -Description "sherpa-o
 Assert-NativeRuntimeFile -Pattern "onnxruntime.dll" -Description "ONNX Runtime native runtime"
 Assert-NativeRuntimeFile -Pattern "LLamaSharp.dll" -Description "LLamaSharp managed cleanup runtime"
 Assert-NativeRuntimeFile -Pattern "llama.dll" -Description "llama.cpp native cleanup runtime"
+
+$forbiddenCudaFiles = @(
+    "onnxruntime_providers_cuda.dll",
+    "onnxruntime_providers_shared.dll",
+    "cublas64_12.dll",
+    "cudart64_12.dll",
+    "cudnn64_9.dll"
+)
+$cudaHits = Get-ChildItem -LiteralPath $WorkDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+    Where-Object { $forbiddenCudaFiles -contains $_.Name }
+if ($cudaHits) {
+    throw "Public CPU package includes a CUDA/NVIDIA runtime file: $($cudaHits[0].FullName)"
+}
+
+$notices = Get-Content -LiteralPath (Join-Path $WorkDir "THIRD-PARTY-NOTICES.md") -Raw
+if ($notices -match "The primary Muesli package includes the version-matched sherpa-onnx CUDA provider") {
+    throw "Packaged THIRD-PARTY-NOTICES.md still claims the public package includes a CUDA provider."
+}
+if ($notices -notmatch "CPU Sherpa") {
+    throw "Packaged THIRD-PARTY-NOTICES.md does not disclose the public CPU-only Sherpa provider."
+}
+
+$inventory = Get-Content -LiteralPath (Join-Path $WorkDir "native-runtime-inventory.json") -Raw | ConvertFrom-Json
+if (-not $inventory.passed -or $inventory.publicPackage.cudaProviderIncluded -ne $false) {
+    throw "Packaged native-runtime inventory does not record a passing CPU-only public package."
+}
+
+$inventoryCheck = Join-Path $env:TEMP "muesli-native-inventory-check.json"
+& (Join-Path $PSScriptRoot "generate-native-runtime-inventory.ps1") `
+    -PackageDirectory $WorkDir `
+    -OutputPath $inventoryCheck
+if ($LASTEXITCODE -ne 0) {
+    throw "Extracted package failed native-runtime inventory regeneration."
+}
 
 $installScript = Get-Content (Join-Path $WorkDir "install-windows.ps1") -Raw
 [scriptblock]::Create($installScript) | Out-Null
