@@ -119,7 +119,7 @@ Remaining class: **None** (done at the stated status), **Implementation**, **Qua
 |---|---|---|---|---|
 | MTG-01 | Simultaneous You/Others capture, retained local audio | Implemented with verification debt | Phase 3 | Qualification: Zoom/Teams/Meet process-target vs endpoint-loopback |
 | MTG-02 | Suspend/resume, cancel, shutdown, crash recovery | Implemented with verification debt | Phase 3 | Qualification: physical suspend, forced kill, disk-full |
-| MTG-03 | Edit title/transcript/notes; retranscribe or re-summarize | Partial | Phase 7 / 5 | Implementation: transcript remains read-only; no retranscribe. Title edit, manual notes, and re-summarize exist |
+| MTG-03 | Edit title/transcript/notes; retranscribe or re-summarize | Partial | Phase 7 / 5 | Implementation: L23 service slice adds candidate retranscribe + transcript save/cancel tests, unwired. UI transcript remains read-only; no retranscribe button pending FeatureRuntime integration. Title edit, manual notes, and re-summarize exist |
 | LIVE-01 | Live meeting transcription and floating window | Implemented with verification debt | Phase 4 | Qualification: simultaneous meeting + UI soak |
 | LIVE-02 | Silero VAD natural-boundary commits (no fixed-duration cut) | Implemented with verification debt | Phase 4 | Qualification: noisy-room |
 | LIVE-03 | Explicit live-preview vs unified final ownership | Complete and verified | Phase 4 | None at contract level. Physical live soak stays on LIVE-01 |
