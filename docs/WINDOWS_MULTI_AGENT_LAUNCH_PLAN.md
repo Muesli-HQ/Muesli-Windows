@@ -1,0 +1,668 @@
+# Muesli Windows multi-agent launch plan
+
+Inventory baseline: 2026-08-18, `codex/wave0-launch-foundation` at `efa961c`.
+
+Authoritative product status remains `WINDOWS_LAUNCH_LEDGER.md`. Capability IDs and macOS behavioral source mappings remain in `WINDOWS_MACOS_PARITY_MATRIX.md`. This document is the execution and ownership plan: it does not replace either status source.
+
+## Launch thesis
+
+Muesli is not mainly behind because the native transcription engine is absent. The core application is broad, the Wave 0 suite has 634 expanded cases, and native CPU dictation is fast. The gap is the final third of product work:
+
+1. only 5 capability rows are **Complete and verified**, while 40 are **Implemented with verification debt**;
+2. 14 rows are **Partial** and 2 are **Missing**;
+3. several user-facing workflows still run through the legacy JSON `AppDataStore`, while the new SQLite repositories already contain stronger folder, search, follow-up, migration, and transactional behavior;
+4. physical audio, real conferencing apps, paste targets, multi-monitor DPI, live providers, clean-machine installation, and signing cannot be proven by unit tests;
+5. the highest-collision WPF integration files remain large, especially `FeatureRuntime.Meetings.cs`, `FeatureRuntime.xaml.cs`, `FeatureRuntime.Dictations.cs`, `FeatureRuntime.Models.cs`, and `FeatureRuntime.Settings.cs`;
+6. release truth has drifted in places: the executable manifest lacks the documented PerMonitorV2 declaration and the third-party notice incorrectly says the public package contains a CUDA provider.
+
+The plan therefore separates implementation, integration, qualification, and release evidence. An agent does not get to mark a module complete merely because a service or button exists.
+
+## Explicitly excluded work
+
+Do not create modules, branches, UI promises, or placeholder implementations for:
+
+- CAL-01 / API-02: Google Calendar OAuth, EventKit, Outlook, or MAPI calendar integration;
+- STORE-01: Microsoft Store packaging;
+- SUM-03: ChatGPT subscription OAuth;
+- SYNC-01: CloudKit/iPhone/iCloud sync or an unapproved replacement backend;
+- SYNC-02: audio synchronization;
+- ARM-01: ARM64;
+- OOS-01: Python, Electron, or web wrappers;
+- OOS-03: literal ports of CoreML, ScreenCaptureKit, AppKit, Sparkle, or TCC.
+
+Keep AUD-03 media pause/ducking parked until the product decision is made. Keep contribution telemetry parked under D4. Observation text/screenshots for CU-01 remain disabled until masking is separately approved and qualified.
+
+## Definition of done
+
+Every implementation module must deliver all of the following:
+
+1. production code with no placeholder or fake success path;
+2. success, failure, cancellation, and recovery tests proportional to the change;
+3. honest UI state and diagnostic text;
+4. no new secret, transcript, title, or path leakage in logs;
+5. Debug and Release build/test passes with zero warnings and errors;
+6. an updated ledger/parity row only after evidence exists;
+7. a visible post-change Muesli launch and clean fresh log slice.
+
+Qualification modules additionally require dated machine/provider/device evidence, exact commands, artifact hashes, and human reviewer identity where the qualification contract requires it.
+
+## Multi-agent operating rules
+
+### Shared-file lock
+
+Only the designated integration owner for a wave may edit these collision-prone files:
+
+- `Features/Runtime/FeatureRuntime.xaml.cs`
+- `Features/Runtime/FeatureRuntime.Meetings.cs`
+- `Features/Runtime/FeatureRuntime.Dictations.cs`
+- `Features/Runtime/FeatureRuntime.Models.cs`
+- `Features/Runtime/FeatureRuntime.Settings.cs`
+- `Services/AppServices.cs`
+- `Services/SettingsStore.cs`
+- `MainWindow.xaml` and `MainWindow.xaml.cs`
+- `App.xaml` and `App.xaml.cs`
+- `Muesli.Windows.csproj`
+
+Feature agents should first add focused services, models, views, and tests in owned files. The integration owner then wires them into shared runtime composition. This keeps four or five agents productive without repeatedly merging the same 1,000–2,000-line files.
+
+### Branch and handoff rules
+
+- One branch and one module ID per agent.
+- No wholesale merges from the obsolete branches listed in the launch ledger.
+- Rebase or merge the current integration branch before requesting review.
+- Keep commits small enough that one behavioral claim can be reviewed independently.
+- Every handoff includes: changed files, capability IDs, commands/results, remaining physical gates, screenshots when UI changed, and the fresh log byte range.
+- Do not silently broaden a module. Open a new module ID when work crosses ownership boundaries.
+
+### Review cadence
+
+- Agent self-check after each coherent slice.
+- Integration review after at most 3–5 changed production files or one new workflow.
+- Full Debug/Release suite at the end of each wave.
+- Package smoke at the end of waves that touch runtime assets, project metadata, installer, manifests, privacy copy, or release scripts.
+- Human/physical qualification evidence is reviewed separately from code review.
+
+### Behavioral parity packet
+
+Before implementing a capability that exists on macOS, its owner must attach a short parity packet to the module handoff. Use the macOS paths already named in `WINDOWS_MACOS_PARITY_MATRIX.md`; do not rediscover or port Apple APIs. Record:
+
+1. entry points and when the control is visible/enabled;
+2. success flow and persisted state;
+3. cancellation, timeout, denial, missing-resource, and retry behavior;
+4. ownership rules for user edits versus generated data;
+5. behavior across close/reopen, restart, crash recovery, and deletion;
+6. progress, empty, degraded, and error UI;
+7. keyboard/accessibility behavior and privacy/logging constraints;
+8. the Windows-native equivalent and any deliberate divergence.
+
+The highest-value achievable parity gaps are already known and are represented below: transcript edit/retranscribe (L23), playback waveform (L24), LM Studio/custom summary contract (L25), nested folder UI (L28), manual-note/full-content search (L29), automatic PDF export (L31), linked follow-up meetings (L32), structured support export (L08), and a signed update channel (L06). Literal Sparkle, ScreenCaptureKit, CoreML, AppKit, TCC, and EventKit designs remain excluded even when the user-visible behavior has a Windows equivalent.
+
+## Portfolio overview
+
+The modules below are deliberately smaller than phases. Most are one focused pull request or a short sequence of tightly related pull requests.
+
+| ID | Module | Phase / capability | Type | Depends on | Primary owner lane |
+|---|---|---|---|---|---|
+| L00 | Ledger and baseline reconciliation | Phase 0 | Program control | — | Integration |
+| L01 | Shared runtime boundary and persistence cutover plan | Phase 0 / continuous | Architecture | L00 | Integration |
+| L02 | PerMonitorV2 manifest and window placement | Phase 12 / SHELL-01, FLOAT-01/02 | Fix + qualification | — | Shell/release |
+| L03 | Package truth, native provenance, and license notices | Phase 13 / MOD-01, PKG-01, EXP-01 | Fix + release | — | Shell/release |
+| L04 | Reproducible package and CI parity | Phase 13 / PKG-01, TEST-01 | Release engineering | L03 | Shell/release |
+| L05 | Authenticode signing integration | Phase 13 / SIGN-01 | External-gated release | L04, D5 | Shell/release |
+| L06 | Signed updater/channel implementation | Phase 13 / UPD-01, API-04 | Implementation | L04, L05 | Shell/release |
+| L07 | Clean-machine install/upgrade/uninstall | Phase 13 / PKG-01 | Qualification | L04–L06 | Quality |
+| L08 | Structured support bundle | Phase 13 / DIAG-01 | Implementation | L03 | Shell/release |
+| L09 | GUI automation and accessibility harness | Continuous / TEST-01 | Test infrastructure | L01 | Quality |
+| L10 | Seven-model CPU catalog qualification | Phase 1 / MOD-02 | Qualification | — | Models/runtime |
+| L11 | CUDA provider packaging and NVIDIA qualification | Phase 1/13 / MOD-01, QUAL-01 | Implementation + qualification | L03 | Models/runtime |
+| L12 | Model lifecycle destructive/UI qualification | Phase 1 / MOD-03 | Qualification | L10 | Models/runtime |
+| L13 | Guided Qwen cleanup lifecycle | Phase 1 / MOD-05 | Implementation | approved GGUF | Models/runtime |
+| L14 | Dictation human corpus and latency gates | Phase 2 / DIC-01, TXT-01, TXT-02 | Qualification | L10 | Dictation/audio |
+| L15 | History, paste, and hotkey application matrix | Phase 2 / DIC-02, DIC-03, HOT-01, HOT-02, API-03 | Qualification | L14 | Dictation/audio |
+| L16 | Microphone, Bluetooth, unplug, and privacy recovery | Phase 2/3 / AUD-01, AUD-02 | Qualification + fixes | — | Dictation/audio |
+| L17 | Shared text-normalization policy | Phase 2/5/8 / TXT-03 | Implementation | product choice | Dictation/audio |
+| L18 | Meeting capture and process attribution | Phase 3 / MTG-01, API-01 | Qualification + fixes | L16 | Meetings |
+| L19 | Meeting lifecycle and crash recovery stress | Phase 3 / MTG-02 | Qualification + fixes | L18 | Meetings |
+| L20 | Live ASR, VAD, gap recovery, and floating window soak | Phase 4 / MOD-04, LIVE-01, LIVE-02, LIVE-04, FLOAT-02 | Qualification + fixes | L16, L18 | Meetings/models |
+| L21 | Finalization, diarization, and aliases | Phase 5 / DIA-01, DIA-02 | Qualification + fixes | L18 | Meetings |
+| L22 | Detection, prompts, join actions, and auto-stop | Phase 6 / DET-01, DET-02, JOIN-01 | Qualification + fixes | L18 | Meetings |
+| L23 | Transcript editing and safe retranscription | Phase 5/7 / MTG-03 | Implementation | L19, L21 | Meetings |
+| L24 | Playback waveform and device-loss behavior | Phase 3/8 / PLAY-01 | Implementation + qualification | L18 | Meetings/library |
+| L25 | Summary-provider parity | Phase 7 / SUM-01, SUM-02 | Implementation + qualification | — | Knowledge/workflows |
+| L26 | Notes, templates, title ownership UX | Phase 7 / SUM-04, TPL-01, NOTE-01 | Qualification + fixes | L25 | Knowledge/workflows |
+| L27 | SQLite runtime cutover and migration | Phase 8 / data foundation | Integration | L01 | Integration/data |
+| L28 | Nested folder product UI | Phase 8 / ORG-01 | Implementation | L27 | Library/data |
+| L29 | Full-content search and repository-backed results | Phase 8/12 / SEARCH-01 | Implementation | L27, L28 | Library/data |
+| L30 | Media import format and cancellation qualification | Phase 8 / IMP-01 | Qualification + fixes | L10, L21 | Library/data |
+| L31 | Export parity and automatic PDF export | Phase 8/9 / EXP-01, AUTO-01 | Implementation + qualification | L26 | Knowledge/workflows |
+| L32 | Linked follow-up meeting workflow | Phase 9 / FOLLOW-01 | Implementation | L23, L27 | Knowledge/workflows |
+| L33 | Post-meeting executable hook smoke | Phase 9 / HOOK-01 | Optional qualification | L31 | Knowledge/workflows |
+| L34 | Onboarding, tray, and startup qualification | Phase 12 / ONB-01, TRAY-01, START-01 | Qualification + fixes | L02, L07 | Shell/release |
+| L35 | Floating indicator and feedback-sound routes | Phase 2/12 / FLOAT-01, SOUND-01 | Qualification + fixes | L02, L16 | Shell/audio |
+| L36 | Privacy deletion, retention, and cache cleanup | Every / PRIV-01 | Qualification + fixes | L12, L27 | Quality/security |
+| L37 | Computer Use sandbox qualification | Phase 10 / CU-01 | Qualification | L09 | Quality/security |
+| L38 | Local-only insights analyzer | Phase 12 / INSIGHT-01 | Optional implementation | D4 scope | Library/data |
+| L39 | Final release-candidate qualification | Phase 13 / QUAL-01 | Release gate | all required modules | Integration/quality |
+
+## Module specifications
+
+### L00 — Ledger and baseline reconciliation
+
+Scope:
+
+- record `efa961c` as the committed Wave 0 baseline;
+- remove stale “uncommitted” and obsolete-current-branch wording;
+- correct the ORG-01 rationale: repository `ParentId` support exists, product UI nesting does not;
+- downgrade SHELL-01 to **Partial** until the executable manifest and physical DPI proof are corrected;
+- keep statuses synchronized between the ledger and parity matrix.
+
+Exit gate: document-only diff passes status-vocabulary checks and names the exact evidence commit.
+
+### L01 — Shared runtime boundary and persistence cutover plan
+
+Scope:
+
+- freeze shared-file ownership for each wave;
+- define adapters between `FeatureRuntime` and repositories instead of injecting more behavior into the central runtime files;
+- write the JSON-to-SQLite cutover sequence, rollback path, backup ownership, and schema-version rules;
+- identify which existing `AppDataStore` calls must move to dictation, meeting, folder, template, and search repositories.
+
+Exit gate: an integration design plus characterization tests that prove current data-loading, saving, ordering, and selection behavior before L27 changes persistence.
+
+### L02 — PerMonitorV2 manifest and window placement
+
+Owned files: `app.manifest`, `Muesli.Windows.csproj`, `WindowPlacementService.cs`, `verify-phase12-ui.ps1`, DPI-focused tests and documentation.
+
+Scope:
+
+- embed `dpiAwareness=PerMonitorV2, PerMonitor` and the legacy `dpiAware=true/pm` fallback;
+- extract and assert the built executable manifest in an automated test;
+- verify dashboard, onboarding, toast, meeting prompt, and live transcript placement;
+- capture 100/125/150/200% evidence and at least two physical monitors where available.
+
+Exit gate: extracted manifest assertion, 352-cell validator pass, physical DPI captures, no clipping, no off-screen restore, and clean fresh logs.
+
+### L03 — Package truth, native provenance, and licenses
+
+Owned files: `THIRD-PARTY-NOTICES.md`, `licenses/`, package metadata generation, package structure tests.
+
+Scope:
+
+- correct the false CUDA-included statement;
+- inventory every native DLL and identify the source NuGet/upstream version and applicable license;
+- assert public CPU-only packaging and reject incomplete/unmanifested CUDA bundles;
+- confirm QuestPDF community-license eligibility with the release owner;
+- ensure package README, metadata, UI diagnostics, and notices say the same thing.
+
+Exit gate: a generated native-runtime inventory in the release report, complete license files, and package tests that fail on disclosure/runtime disagreement.
+
+### L04 — Reproducible package and CI parity
+
+Scope:
+
+- make local and CI build the same Release package from the pinned SDK and release identity;
+- upload ZIP, installer, TRX, package-smoke report, manifest extraction, hashes, and native inventory;
+- build the Inno installer in CI or explicitly move it to a separate signed-release workflow;
+- reject dirty/uncommitted release inputs unless deliberately overridden and recorded;
+- add a one-command non-signing release rehearsal.
+
+Exit gate: two clean builds produce matching content inventories and all CI artifacts needed for review.
+
+### L05 — Authenticode signing integration
+
+Scope achievable before D5:
+
+- harden certificate selection, timestamping, verification, and failure reporting;
+- sign both packaged app and installer in the correct order;
+- keep secrets out of repository, logs, and artifacts;
+- add an unsigned rehearsal mode that validates every step except certificate use.
+
+External exit gate: production certificate available, both signatures valid, timestamp chain valid on a clean machine.
+
+### L06 — Signed updater/channel implementation
+
+Scope:
+
+- define a signed update manifest with version, channel, package hash, minimum supported version, and release notes;
+- download to a controlled temporary location, verify signature and hash before execution, fail closed, and preserve rollback/install recovery;
+- replace the About-only GitHub link with honest “check”, “available”, “downloaded”, “install”, and error states;
+- never emulate Sparkle or use macOS APIs.
+
+Exit gate: local signed-fixture tests for upgrade, downgrade rejection, tamper rejection, cancellation, offline behavior, and rollback. Production completion waits for L05.
+
+### L07 — Clean-machine install/upgrade/uninstall
+
+Scope:
+
+- test ZIP and installer on supported Windows 10 and Windows 11 x64 images;
+- first run, onboarding once, data locations, model preparation, startup registration, upgrade with retained data, uninstall with explicit user-data policy;
+- confirm no Python/runtime prerequisite;
+- verify repair/reinstall and locked-file behavior.
+
+Exit gate: dated VM reports with screenshots, hashes, OS build, install/upgrade/uninstall outcome, and fresh logs.
+
+### L08 — Structured support bundle
+
+Scope:
+
+- add a user-visible export containing redacted logs, app/runtime versions, model/provider status, package identity, OS/audio-device categories, and recent incident categories;
+- exclude transcripts, meeting titles, window titles, credentials, raw audio, and Computer Use values by default;
+- preview exactly what will be exported and let the user cancel.
+
+Exit gate: redaction tests, large-log tests, file-lock/error tests, human inspection, and no network transmission.
+
+### L09 — GUI automation and accessibility harness
+
+Scope:
+
+- add out-of-process UI Automation coverage for launch, navigation, themes, essential buttons, dialogs, keyboard traversal, accessible names, and single-instance activation;
+- keep phase-preview tests separate from production-startup automation;
+- provide screenshot-on-failure and deterministic clean-profile setup.
+
+Exit gate: stable CI smoke for Dashboard, Dictations, Meetings, Models, Settings, About, onboarding, and one meeting detail fixture.
+
+### L10 — Seven-model CPU catalog qualification
+
+Scope:
+
+- run every advertised offline family on approved real speech;
+- verify exact model identity, hashes, timestamps, deterministic reuse, RTF, WER/CER, cancellation, and failure on missing/corrupt files;
+- publish results by model, language, machine, and provider.
+
+Exit gate: `smoke-transcription-models.ps1` plus provider-specific gates pass for all advertised CPU models. Models that cannot pass are removed or honestly scoped before launch.
+
+### L11 — CUDA provider packaging and NVIDIA qualification
+
+Scope:
+
+- acquire/stage the version-matched sherpa-onnx CUDA runtime under a documented provenance process;
+- package the provider only when every required DLL and manifest entry is present;
+- qualify supported NVIDIA hardware, driver/CUDA compatibility, memory, cold/warm latency, deterministic output, and CPU fallback disclosure;
+- never silently claim or select CUDA from a partial bundle.
+
+Exit gate: packaged NVIDIA build passes native startup, model, dictation, meeting, diarization, stress, and release gates. Until then public metadata remains CPU-only.
+
+### L12 — Model lifecycle destructive/UI qualification
+
+Scope:
+
+- exercise prepare, progress, cancel, retry, verify, delete, corrupt archive, corrupt model, insufficient disk, offline, read-only cache, and restart recovery;
+- verify role selection never downloads or activates a recognizer;
+- verify deletion cannot cross the owned cache root.
+
+Exit gate: recorded Models-page run plus destructive prepared-cache tests for all lifecycle states.
+
+### L13 — Guided Qwen cleanup lifecycle
+
+Scope:
+
+- proceed only after one GGUF, source, license, size, hash, and prompt contract are approved;
+- add explicit download, progress, cancellation, verification, disk-space checks, delete, and disabled/raw-text fallback;
+- benchmark cleanup latency and transcript preservation.
+
+Exit gate: clean-machine lifecycle and quality cases pass; otherwise keep manual placement and status **Partial**.
+
+### L14 — Dictation human corpus and latency
+
+Scope:
+
+- build the human-reviewed short-command, paragraph, dictionary, numbers/punctuation, accent, silence, and noise corpus;
+- run CPU and qualified CUDA against explicit model IDs;
+- enforce WER ≤ 0.15, CER ≤ 0.08, RTF ≤ 0.20 unless the release owner approves stricter targets;
+- track release-to-paste separately from inference.
+
+Exit gate: `test-transcription-corpus.ps1` and `qualify-dictation-corpus.ps1` pass with reviewer provenance.
+
+### L15 — History, paste, and hotkey application matrix
+
+Scope:
+
+- dashboard history copy/delete/date filter/search, then Notepad, Chrome, Office, and another editor;
+- alternate keyboard layouts, custom modifiers, F-key conflicts, elevation/UIPI mismatch, target closure, clipboard-only mode, clipboard restoration, Escape cancellation, and hands-free double tap;
+- confirm the original target regains focus and failure leaves recoverable text.
+
+Exit gate: four fresh `qualify-dictation-target.ps1` reports plus `qualify-dictation-target-suite.ps1` pass.
+
+### L16 — Microphone and route recovery
+
+Scope:
+
+- system default and explicit devices, privacy denial, default-device change, unplug/replug, Bluetooth hands-free loss/reappearance, sleep/resume, exclusive-mode conflict, and device-enumerator transient failure;
+- cover dictation and meeting capture without modal-error storms;
+- verify temporary file ownership and cleanup.
+
+Exit gate: physical device matrix, recovery tests, no uncaught device errors, and honest fallback diagnostics.
+
+### L17 — Shared text-normalization policy
+
+Scope:
+
+- decide whether meeting/import should share dictation filler removal;
+- codify ordering for filler removal, cleanup, dictionary correction, punctuation, speaker-prefix preservation, and user edits;
+- prevent reprocessing from corrupting aliases or manual transcript edits.
+
+Exit gate: one documented pipeline per workflow with cross-workflow golden tests.
+
+### L18 — Meeting capture and process attribution
+
+Scope:
+
+- real Zoom, Teams, Meet, and Webex runs;
+- Windows 11 process-tree loopback and truthful endpoint fallback; Windows 10 endpoint-only behavior;
+- simultaneous mic/system alignment, unrelated-system-audio leakage checks, late-start tracks, and device health.
+
+Exit gate: `PHASE3_QUALIFICATION.md` capture matrix passes with retained diagnostic reports and human listening review.
+
+### L19 — Meeting lifecycle and recovery stress
+
+Scope:
+
+- suspend/resume, cancel, shutdown, forced kill, crash journal, disk full, corrupt journal, missing part, app restart, and repeated finalize;
+- prove exactly-once persistence and that manual recordings never auto-stop;
+- preserve recoverable audio and never fabricate a completed meeting.
+
+Exit gate: `qualify-meeting-session-lifecycle.ps1`, fault-injection tests, and a real forced-kill recovery pass.
+
+### L20 — Live ASR, VAD, gap recovery, and floating window
+
+Scope:
+
+- long meeting, silence/noise, rapid turns, multilingual advertised speech, route change, suspend, live-model crash, ownership modes, gap recovery, and final reconciliation;
+- measure memory growth and UI responsiveness;
+- verify hover waveform and window placement across DPI.
+
+Exit gate: streaming qualification fixture test runs rather than skips; long-soak report meets latency/memory limits and transcript ownership is unambiguous.
+
+### L21 — Finalization, diarization, and aliases
+
+Scope:
+
+- human-reviewed two-, three-, and overlapping-speaker fixtures;
+- CPU and packaged CUDA if available;
+- You/Others attribution, stable identities, channel gaps, degraded mic/system tracks, alias rename persistence, copy, notes, and export surfaces;
+- publish speaker coverage and quality limitations.
+
+Exit gate: multi-speaker qualification test runs rather than skips and UI alias round-trip is manually confirmed.
+
+### L22 — Detection, prompts, join actions, and auto-stop
+
+Scope:
+
+- live positive and negative cases across conferencing apps and ordinary browser/media windows;
+- foreground app, URL, title, microphone, camera, dedupe, dismiss, rejoin, leave, crash, and muted/browser-call cases;
+- verify Join & Record, Join Only, and Record Only without implying calendar support.
+
+Exit gate: false-positive/negative matrix and prompt-action recordings pass; scan logging is rate-limited and privacy-safe.
+
+### L23 — Transcript editing and safe retranscription
+
+Scope:
+
+- editable transcript with explicit save/cancel and optimistic backup;
+- prompt to re-summarize when an edit invalidates generated notes, without altering manual notes;
+- retranscribe from retained owned audio into a new candidate result;
+- compare/accept/reject so the prior transcript is never destroyed by failure or cancellation;
+- preserve title ownership and aliases.
+
+Exit gate: macOS-equivalent behavioral flow, destructive-failure tests, and meeting-detail GUI automation.
+
+### L24 — Playback waveform and device-loss behavior
+
+Scope:
+
+- generate/cache waveform data off the UI thread;
+- seek from waveform, preserve track selection, handle missing/corrupt audio and output-device loss;
+- delete orphaned waveform caches with recording deletion.
+
+Exit gate: waveform accuracy/cache tests, playback GUI test, and physical output-device loss recovery.
+
+### L25 — Summary-provider parity
+
+Scope:
+
+- implement LM Studio and/or documented custom HTTP using a single explicit contract;
+- keep OpenAI, OpenRouter, Ollama, and local behavior consistent for timeout, cancellation, invalid response, disclosure, and redaction;
+- never treat ChatGPT subscription OAuth as available.
+
+Exit gate: mock contract tests and opt-in live-provider runs with log-redaction review.
+
+### L26 — Notes, templates, and title ownership UX
+
+Scope:
+
+- template create/edit/delete/select and re-summary;
+- manual notes never overwritten by re-summary or retranscription;
+- generated titles update only while user ownership remains false;
+- errors preserve the prior notes/title.
+
+Exit gate: GUI automation plus live provider/local passes across success, cancellation, timeout, and retry.
+
+### L27 — SQLite runtime cutover and migration
+
+Scope:
+
+- replace production `AppDataStore` reads/writes with the tested repository interfaces;
+- migrate JSON atomically with backup, digest comparison, restart idempotence, schema-forward rejection, and rollback instructions;
+- preserve ordering, IDs, timestamps, folders, notes, aliases, automation results, settings references, and visible selection;
+- do not delete JSON backup until a separately defined retention point.
+
+Exit gate: prepared real-profile clone migrates with equal counts/digests, the second launch performs no duplicate migration, and forced failures retain the old data intact.
+
+### L28 — Nested folder product UI
+
+Scope:
+
+- expose repository `ParentId`, child listing, ancestry, subtree moves, cycle rejection, reordering, breadcrumbs, and safe delete/reparent behavior;
+- support moving meetings and searching within a subtree;
+- preserve one-level migrated folders as roots.
+
+Exit gate: nested-folder GUI automation and repository tests pass; ORG-01 becomes **Complete and verified** only when the user-facing tree is present.
+
+### L29 — Full-content search
+
+Scope:
+
+- route product search through `ISearchRepository` rather than the in-memory filter;
+- index title, transcript, generated notes, manual notes, aliases, follow-ups, dictionary text where intended, and folder ancestry;
+- add snippets/highlights, type and folder filters, stable sorting, large-history latency, and transactional freshness.
+
+Exit gate: manual-note searches work in the actual UI, updates are immediately searchable, and large-history p95 meets an approved target.
+
+### L30 — Media import qualification
+
+Scope:
+
+- real speech in wav/mp3/m4a/aac/mp4/mov/mkv/webm;
+- duration correctness, progress, cancellation, ASR, diarization, large/chunked media, corrupt/truncated files, unsupported codec guidance, source ownership, and no fake success;
+- keep ogg rejected unless a decoder is deliberately added and qualified.
+
+Exit gate: both real-media qualification tests run rather than skip and `test-media-imports.ps1` passes the reviewed manifest.
+
+### L31 — Export parity and automatic PDF
+
+Scope:
+
+- human-open manual Markdown/PDF with transcript, generated notes, manual notes, aliases, and metadata modes;
+- add collision-safe atomic automatic PDF export if retained in scope;
+- preserve existing Markdown behavior and expose per-format errors;
+- close QuestPDF release-license review.
+
+Exit gate: automated content tests, human open on clean machine, path/permission/locked-file cases, and explicit license approval.
+
+### L32 — Linked follow-up meeting workflow
+
+Scope:
+
+- use the existing persistence follow-up/link substrate to create a new meeting linked to a completed predecessor;
+- show predecessor/successors, thread order, title policy, and optional summary context;
+- distinguish follow-up from resume and from generated “Follow-ups” bullets;
+- do not require an external calendar or SaaS destination.
+
+Exit gate: local linked workflow matches the macOS behavior, survives restart/migration, and is searchable/exportable.
+
+### L33 — Post-meeting executable hook smoke
+
+Scope:
+
+- run one benign real `.exe` fixture through JSON stdin;
+- verify timeout, cancellation, Job Object descendant termination, output bounds/redaction, retry, and auto-export path ownership;
+- keep hooks disabled by default.
+
+Exit gate: packaged-app smoke and no sensitive payload in logs or captured output.
+
+### L34 — Onboarding, tray, and startup qualification
+
+Scope:
+
+- clean-profile onboarding, pause/resume, real mic/model/hotkey gates, close/reopen, and already-configured migration;
+- tray open/recent items/detected meeting/resume setup/tour/settings/about/quit;
+- startup install, disable, upgrade, uninstall, elevation, and background behavior;
+- upcoming calendar remains honestly unavailable.
+
+Exit gate: clean-profile VM walkthrough plus GUI automation and installer/startup evidence.
+
+### L35 — Floating indicator and feedback-sound routes
+
+Scope:
+
+- indicator drag/click/stop/cancel/levels on multiple monitors and DPI values;
+- start, insert, model-ready, setup-session, disabled-setting, speaker, headphone, and route-change sound behavior;
+- no sound during privacy-sensitive setup tests where suppression is required.
+
+Exit gate: physical route matrix, DPI captures, and audible human confirmation.
+
+### L36 — Privacy deletion, retention, and cache cleanup
+
+Scope:
+
+- delete individual and bulk dictations/meetings with owned audio, journals, aliases, waveform caches, and search documents;
+- prepared model/cache deletion remains contained to owned roots;
+- imported originals are never deleted;
+- privacy document, Settings copy, package README, and actual network behavior agree.
+
+Exit gate: destructive tests against cloned prepared data, path-boundary tests, recovery behavior, and human disclosure review.
+
+### L37 — Computer Use sandbox qualification
+
+Scope:
+
+- exercise one approved local-app workflow and one approved browser workflow;
+- verify allowlists, confirmation boundaries, foreground/process identity, changed-context rejection, trace redaction, cancellation, and disabled-by-default behavior;
+- keep window text and screenshots disabled until a separate masking module is approved.
+
+Exit gate: sandboxed live workflow with no values, commands, screenshots, or secrets in logs.
+
+### L38 — Local-only insights analyzer
+
+Scope:
+
+- optional local statistics/word analysis with no contribution telemetry;
+- explain source data and deletion behavior;
+- keep sharing/contribution absent until D4.
+
+Exit gate: only schedule after launch blockers and core parity modules; otherwise leave INSIGHT-01 **Partial** without delaying launch.
+
+### L39 — Final release-candidate qualification
+
+Scope:
+
+- freeze a commit and version;
+- run Debug/Release tests, PowerShell syntax, package/installer, native inventory, signing, package smoke, clean VM, CPU model matrix, qualified CUDA matrix if advertised, dictation targets/corpus, meeting capture/lifecycle/live/diarization/detection, imports, exports, onboarding, DPI/accessibility, privacy deletion, and fresh logs;
+- archive exact commands, TRX, reports, screenshots, hashes, signatures, OS/hardware/provider identities, and approved waivers;
+- no status promotion based on historical artifacts.
+
+Exit gate: zero unresolved launch blockers, every shipped claim backed by current-candidate evidence, rollback prepared, and release owner approval.
+
+## Recommended five-agent allocation
+
+Keep stable lanes across waves so agents build context and do not repeatedly relearn ownership.
+
+| Agent | Stable lane | Primary files | Must not edit without integration lock |
+|---|---|---|---|
+| A | Models and native runtime | model catalogs/lifecycle, native ASR/diarization/cleanup, model tests, benchmark scripts | shared runtime composition, package metadata |
+| B | Dictation and audio | capture, hotkeys, paste, text normalization, dictation tests/qualification | meeting runtime, Settings shared state |
+| C | Meetings | capture session, lifecycle, live/finalization/detection/playback, meeting tests | persistence schema, release scripts |
+| D | Data and knowledge workflows | repositories, migration, search, folders, notes/providers/export/follow-up | central runtime wiring unless designated |
+| E | Shell, quality, and release integration | manifest, windows, onboarding/tray, diagnostics, automation host, CI/package/installer/docs | native engine internals |
+
+Agent E acts as integration owner by default. Rotate that role only at wave boundaries.
+
+## Wave schedule
+
+### Wave 1 — Correct launch truth and create safe concurrency
+
+Run in parallel:
+
+- Agent A: L10 design/fixture inventory and L11 CUDA provenance gap analysis; no CUDA claim or packaging yet.
+- Agent B: L14 corpus manifest preparation and L15 target-run rehearsal tooling.
+- Agent C: L23 transcript-edit/retranscribe service contract and failure tests, without shared runtime wiring.
+- Agent D: L01 + L27 cutover design and production behavior characterization.
+- Agent E: L00, L02, L03, and L09 shell navigation skeleton.
+
+Wave exit: ledger corrected, DPI/package-truth defects fixed, persistence cutover approved, shared-file ownership enforced, full suite/package smoke green.
+
+### Wave 2 — Prove the native core on real hardware
+
+- A: L10, L11, L12.
+- B: L14, L15, L16, then L17.
+- C: L18, L19, L21.
+- D: begin L27 migration implementation behind an adapter/feature gate.
+- E: L04 and L08; support qualification evidence collection.
+
+Wave exit: CPU catalog, dictation, paste, devices, meeting capture/lifecycle/diarization have current evidence; SQLite migration passes cloned-profile tests.
+
+### Wave 3 — Close meeting and library parity
+
+- A/C jointly but sequentially: L20 live stack.
+- C: L22, L23, L24.
+- D: finish L27, then L28, L29, L32.
+- B: regression support for audio/text/paste.
+- E: expand L09 automation around the new flows.
+
+Wave exit: safe transcript editing/retranscription, waveform, detection, nested folders, full search, and linked follow-ups work through production persistence.
+
+### Wave 4 — Finish knowledge workflows and product shell
+
+- D: L25, L26, L30, L31, L33.
+- E: L34, L35, L36, L37.
+- A/B/C: provider, audio, import, export, and meeting regression support.
+
+Wave exit: all achievable parity workflows are implemented; remaining work is current-candidate qualification or explicit external signing dependency.
+
+### Wave 5 — Release channel and candidate
+
+- E: L05, L06, L07.
+- All agents: L39 evidence in their stable lanes.
+- D: L38 only if the core candidate is already green and D4 permits local-only scope.
+
+Wave exit: signed, upgradeable, clean-machine-qualified release candidate or a precise external blocker report naming only D5.
+
+## First five assignments to start now
+
+1. **Agent E — L02:** fix the DPI manifest, add built-manifest assertion, and capture one 100% DPI smoke. This is the highest-confidence current defect.
+2. **Agent E2 or release specialist — L03:** correct CUDA/package disclosures and generate a native DLL/license inventory. If only five agents exist, keep this with Agent E after L02.
+3. **Agent D — L01/L27 design slice:** map every live `AppDataStore` call to the new repository, add characterization tests, and propose the atomic cutover. Do not wire UI yet.
+4. **Agent C — L23 service slice:** implement candidate-based retranscription and transcript-edit ownership tests without touching shared runtime files.
+5. **Agent B — L14/L15 evidence setup:** prepare the human corpus manifest and execute the four-app target protocol; file product bugs separately from evidence.
+
+Agent A should start L10 fixture/model-matrix preparation as soon as a sixth slot is available, or replace Agent B temporarily if qualification requires human coordination before it can proceed.
+
+## Review dashboard
+
+Track each module with these fields:
+
+| Field | Allowed values |
+|---|---|
+| Module | L00–L39 |
+| Capability IDs | ledger IDs only |
+| State | Not started / In progress / In review / Code complete / Qualification pending / Blocked / Complete |
+| Owner | one agent |
+| Integration owner | one agent |
+| Base commit | exact SHA |
+| Changed shared files | explicit list or none |
+| Automated evidence | commands + result artifact |
+| Human/physical evidence | reviewer, machine, device/provider, date |
+| Remaining gate | one concrete sentence |
+| Ledger update | pending / included / not warranted |
+
+Review priority is always: data loss/security/privacy, crashes and false success, release truth/signing/update, core dictation and meeting correctness, then parity polish. Test count alone is never a priority signal.
