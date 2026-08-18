@@ -2,6 +2,7 @@
 
 Authoritative status: [`docs/WINDOWS_LAUNCH_LEDGER.md`](WINDOWS_LAUNCH_LEDGER.md).
 Capability IDs: [`docs/WINDOWS_MACOS_PARITY_MATRIX.md`](WINDOWS_MACOS_PARITY_MATRIX.md).
+Multi-agent execution and ownership plan: [`docs/WINDOWS_MULTI_AGENT_LAUNCH_PLAN.md`](WINDOWS_MULTI_AGENT_LAUNCH_PLAN.md).
 This file is a short remaining-work view. It is not a second status matrix.
 
 ## Native launch (implemented)
