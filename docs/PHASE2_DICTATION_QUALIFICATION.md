@@ -120,3 +120,9 @@ The repository supplies the schema enforcement, CPU/CUDA runner, paste-target
 runner, unit tests, and privacy gates. The human-reviewed audio/reference corpus
 and four human paste reviews must be supplied by a human operator. Until those
 artifacts exist and pass, Phase 2 remains implemented but not fully qualified.
+
+Operator kit for filling this evidence (template, not a passing corpus):
+`qualification/dictation-corpus/` and `docs/L14_L15_EVIDENCE_STATUS.md`. A
+placeholder manifest must fail `-ValidateOnly` until real WAVs, listened
+references, and reviewer identity exist. Do not treat rehearsal output as
+qualification.

@@ -11,6 +11,10 @@ $reports = @($ReportPaths | ForEach-Object {
     if ($report.schemaVersion -ne 2 -or -not $report.passed -or -not $report.textVerified) {
         throw "Target report is not a passed, human-verified schema-2 report: $path"
     }
+    $json = $report | ConvertTo-Json -Depth 10
+    if ($json -match "(?i)(windowTitle|targetWindowTitle|transcript|utterance|expectedTranscript|observedTranscript)") {
+        throw "Target report contains forbidden transcript or window-title fields: $path"
+    }
     $report
 })
 $requiredKinds = @("Notepad", "Chrome", "Office", "Other")
@@ -36,4 +40,5 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
     Set-Content -LiteralPath $resolvedOutput -Value $json -Encoding UTF8
 }
 Write-Host "Dictation target suite passed for Notepad, Chrome, Office, and another editor."
+Write-Host "This is not Phase 2 qualification unless the four reports came from fresh human-verified paste traces."
 $json
