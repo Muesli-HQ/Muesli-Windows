@@ -26,7 +26,7 @@ The runnable Windows catalog contains exactly seven sherpa-onnx offline choices:
 - Qwen3-ASR 0.6B INT8
 - Cohere Transcribe INT8 (English selected)
 
-macOS CoreML, WhisperKit, FluidAudio, and LiteRT identifiers are not Windows runtime choices. CUDA-to-CPU provider fallback remains within the same sherpa-onnx engine and selected model; there is no cross-engine fallback.
+macOS CoreML, WhisperKit, FluidAudio, and LiteRT identifiers are not Windows runtime choices. The public Wave 0 package ships the CPU sherpa-onnx provider only. CUDA-to-CPU provider fallback remains within the same sherpa-onnx engine and selected model when an externally staged matching CUDA bundle is present; there is no cross-engine fallback. NVIDIA packaging is L11 and is not a public-package claim.
 
 ## Lifecycle and integrity
 

@@ -12,7 +12,10 @@ Expected outputs:
 ```text
 artifacts\muesli-windows-0.2.0-win-x64.zip
 artifacts\MuesliSetup-0.2.0-win-x64.exe
+artifacts\native-runtime-inventory.json
 ```
+
+`scripts\generate-native-runtime-inventory.ps1` also writes that inventory from a publish directory. Package tests fail if notices claim CUDA is included or if a packaged native DLL is missing from the inventory/catalog.
 
 ## What Works
 
@@ -37,7 +40,10 @@ artifacts\MuesliSetup-0.2.0-win-x64.exe
 
 ## Known Limits
 
-- Supported models use CUDA where available and CPU otherwise without changing engines. Timestamped segments support recorded meetings and speaker-diarization alignment.
+- The public Wave 0 package includes the CPU Sherpa provider only. It does not
+  claim NVIDIA acceleration. CUDA remains optional external staging until L11
+  qualifies a version-matched provider. Timestamped segments support recorded
+  meetings and speaker-diarization alignment.
 - Qwen cleanup has a native v1 runtime path.
 - Qwen cleanup is disabled by default and needs a compatible GGUF model in the native-cleanup cache.
 - System loopback capture can be blocked by some Windows audio/device setups; mic recording still works.
@@ -58,7 +64,7 @@ Automated package smoke test:
 .\scripts\test-windows-package.ps1
 ```
 
-Packaged CPU/CUDA release evidence:
+Packaged CPU release evidence (CUDA is not included in the public package):
 
 ```powershell
 .\scripts\qualify-windows-release.ps1 `
