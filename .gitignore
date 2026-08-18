@@ -41,7 +41,12 @@ BenchmarkDotNet.Artifacts/
 # Local packages, downloaded runtimes, and model caches
 packages/
 .nuget/
-models/
+# Repo-root downloaded-model cache only. A bare `models/` pattern is
+# case-insensitive on Windows and ignores C# `Models/` source folders
+# under windows-native/Muesli.Windows/ (the Wave 1 compile trap).
+/models/
+**/models/*.onnx
+**/models/*.gguf
 downloads/
 *.gguf
 *.onnx
