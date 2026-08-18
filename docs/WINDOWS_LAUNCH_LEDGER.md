@@ -36,6 +36,7 @@ Implemented never means macOS parity. A source file, button, or historical bench
 | Hardware-free Wave 0 integration suite | **634** expanded xUnit cases in `Muesli.Windows.Tests`: **630 passed, 0 failed, 4 skipped** in both Debug and Release on .NET 10. This includes shell-view structure, complete action-handler wiring, and nested feature-event routing coverage. The four skips report their absent real-media, streaming-model, or multi-speaker qualification prerequisites instead of silently returning as passes. |
 | Wave 0 integration re-run | User-scoped SDK `10.0.400`; `dotnet build … --no-restore` completed with **0 warnings, 0 errors** in Debug and Release. `dotnet test … --no-restore` completed with **630 passed, 0 failed, 4 explicitly skipped** in each configuration. This is the reviewed working-tree baseline and remains uncommitted pending user review. |
 | Wave 0 package smoke | Self-contained `muesli-windows-0.2.0-win-x64.zip` built successfully; required/forbidden artifact checks, fresh-machine QA, native startup diagnostic, and visible launch smoke passed. The diagnostic loaded the packaged CPU provider. Release metadata explicitly records that CUDA is not included. Inno Setup 6.7.1 also compiled `MuesliSetup-0.2.0-win-x64.exe` successfully; it was not installed or signed. |
+| L03 package truth (this branch) | Public notices, package metadata, and the generated native-runtime inventory now agree that Wave 0 ships the CPU Sherpa provider only. The false “primary package includes CUDA provider” sentence was removed. CUDA remains Partial / not in the public package (L11). QuestPDF 2026.5.0 still selects `LicenseType.Community`; EXP-01 is not complete. |
 | Wave 0 visible shell check | After shell decomposition, Dashboard/Dictations, Meetings, Models, Settings, and About navigated successfully in dark and light themes. About showed `v0.2.0`; the original dark theme and foreground dashboard were restored. The 4,983-byte fresh log slice contained no `ERROR`, `Unhandled UI exception`, or `XamlParseException`. |
 | Historical CUDA/package/UI evidence from 2026-08-01–02 | Retained under `artifacts/` and older PHASE docs. **Not re-run for this ledger.** It does not promote any hardware-dependent row to Complete and verified. |
 | Architecture | x64 only. ARM64 packaging is excluded. |
@@ -89,7 +90,7 @@ Remaining class: **None** (done at the stated status), **Implementation**, **Qua
 
 | ID | Capability | Status | Owner | Remaining |
 |---|---|---|---|---|
-| MOD-01 | Offline Parakeet TDT with CPU/CUDA provider selection | Partial | Phase 1 / 13 | CPU provider is packaged; CUDA selection exists for an externally staged matching bundle, but the public package must not claim NVIDIA until Wave 5 stages and qualifies the provider |
+| MOD-01 | Offline Parakeet TDT with CPU/CUDA provider selection | Partial | Phase 1 / 13 | CPU provider is packaged; public notices/inventory now say CPU-only. CUDA selection exists for an externally staged matching bundle, but the public package must not claim NVIDIA until L11 / Wave 5 stages and qualifies the provider |
 | MOD-02 | Seven pinned offline ASR families | Implemented with verification debt | Phase 1 | Qualification: seven-family CPU matrix; retained CUDA smoke is historical |
 | MOD-03 | Prepare/cancel/retry/verify/delete/recovery lifecycle | Implemented with verification debt | Phase 1 | Qualification: Models UI during real downloads; destructive cache delete against user caches not repeated here |
 | MOD-04 | Opt-in Nemotron 3.5 live model; no CoreML EOU | Implemented with verification debt | Phase 4 | Qualification: long meeting, Bluetooth/route, CUDA-live, multilingual human review |
@@ -158,7 +159,7 @@ Remaining class: **None** (done at the stated status), **Implementation**, **Qua
 | ID | Capability | Status | Owner | Remaining |
 |---|---|---|---|---|
 | IMP-01 | Import supported media with cancel, progress, no fake success | Implemented with verification debt | Phase 8 | Qualification: ASR+diarization on each advertised format. Advertised set is wav/mp3/m4a/aac/mp4/mov/mkv/webm. **ogg is rejected with guidance** |
-| EXP-01 | Manual Markdown/PDF export with aliases and manual notes | Implemented with verification debt | Phase 8 | Qualification: human open of PDF/MD. QuestPDF community-license remains a Phase 13 release check |
+| EXP-01 | Manual Markdown/PDF export with aliases and manual notes | Implemented with verification debt | Phase 8 | Qualification: human open of PDF/MD. QuestPDF 2026.5.0 is used with `LicenseType.Community`; community-license eligibility remains a Phase 13 release-owner check. Do not treat EXP-01 as complete |
 | HOOK-01 | Post-meeting `.exe` hook, JSON stdin, timeout, Job Object | Complete and verified | Phase 9 | None at contract level. Real third-party executables are optional later smoke |
 | AUTO-01 | Automatic Markdown export, atomic collision-safe | Implemented with verification debt | Phase 9 | Implementation: PDF auto-export is missing. Markdown contract is unit-covered |
 | FOLLOW-01 | Configurable follow-up/linked workflow | Missing | Phase 9 | Implementation after a destination contract. Summary “Follow-ups” bullets are not this feature |
@@ -188,7 +189,7 @@ Remaining class: **None** (done at the stated status), **Implementation**, **Qua
 | PRIV-01 | Local-first audio, explicit network, deletion/retention | Implemented with verification debt | Every module / 13 | Qualification: destructive deletion against prepared caches; privacy copy vs live Settings |
 | UPD-01 | Signed automatic updates | Missing | Phase 13 | Implementation after D5. About currently opens GitHub Releases |
 | SIGN-01 | Authenticode signed app and installer | Externally blocked | Phase 13 / D5 | Decision: production certificate |
-| PKG-01 | Self-contained x64 zip and Inno installer | Partial | Phase 13 | Implementation/qualification: unsigned; upgrade and clean-VM gates open |
+| PKG-01 | Self-contained x64 zip and Inno installer | Partial | Phase 13 | Implementation/qualification: unsigned; upgrade and clean-VM gates open. Public package inventory and notices now record CPU-only; CUDA packaging is L11 |
 | TEST-01 | Automated success/failure/cancel/recovery coverage | Partial | Continuous | Implementation: no GUI automation suite; live OS detection/paste/mic remain outside unit tests |
 | QUAL-01 | Repeatable CPU/CUDA/hardware/package gates | Partial | Phase 13 | Qualification: current-tree evidence. Historical Parakeet-era reports are not this catalog |
 | STORE-01 | Microsoft Store | Excluded | — | Excluded |

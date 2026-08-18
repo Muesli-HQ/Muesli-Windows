@@ -18,7 +18,7 @@ Owner modules are launch-program Phase 0–13. They are not the historical P0–
 
 | ID | Capability | macOS reference | Windows evidence | Status | Owner |
 |---|---|---|---|---|---|
-| MOD-01 | Offline Parakeet TDT with CPU/accelerator selection | `Models.swift`, `TranscriptionRuntime.swift`, `FluidAudioBackend.swift` | Packaged CPU provider; `NativeSherpaRuntime.cs` can select an externally staged matching CUDA bundle, but the public package does not yet ship one | Partial | Phase 1 / 13 |
+| MOD-01 | Offline Parakeet TDT with CPU/accelerator selection | `Models.swift`, `TranscriptionRuntime.swift`, `FluidAudioBackend.swift` | Packaged CPU provider; public notices/inventory must not claim NVIDIA. `NativeSherpaRuntime.cs` can select an externally staged matching CUDA bundle, but the public package does not ship one | Partial | Phase 1 / 13 |
 | MOD-02 | Multiple offline ASR models | `Models.swift`, `ModelsView.swift`; WhisperKit/FluidAudio/Qwen/Cohere/SenseVoice backends | Seven sherpa-onnx choices in `TranscriptionModelCatalog.cs`. CoreML/LiteRT absent | Implemented with verification debt | Phase 1 |
 | MOD-03 | Download, progress, cancel, delete, switch, recovery | `ModelsView.swift`, `Models.swift` | `TranscriptionModelLifecycleService.cs`; `TranscriptionModelPlatformTests.cs` | Implemented with verification debt | Phase 1 |
 | MOD-04 | Opt-in live Nemotron 3.5; Parakeet Realtime EOU | `Models.swift`, `MeetingStreamingPartialSession.swift` | `StreamingModelPlatform.cs`; CoreML EOU absent | Implemented with verification debt | Phase 4 |
@@ -87,7 +87,7 @@ Owner modules are launch-program Phase 0–13. They are not the historical P0–
 | ID | Capability | macOS reference | Windows evidence | Status | Owner |
 |---|---|---|---|---|---|
 | IMP-01 | Import media, diarize, cancel | `AudioFileImportController.swift` | `MediaImportFormats.cs` (no ogg); `Phase8MediaImportTests.cs`, `Phase8ImportCancellationTests.cs` | Implemented with verification debt | Phase 8 |
-| EXP-01 | Export PDF/Markdown | `MeetingExporter.swift` | `MeetingExporter.cs`; `Phase8ExportTests.cs` | Implemented with verification debt | Phase 8 |
+| EXP-01 | Export PDF/Markdown | `MeetingExporter.swift` | `MeetingExporter.cs`; `Phase8ExportTests.cs`. QuestPDF 2026.5.0 Community selection recorded; eligibility is a Phase 13 owner check | Implemented with verification debt | Phase 8 |
 | HOOK-01 | Post-meeting executable hook | `MeetingHookRunner.swift` | `PostMeetingAutomationService.cs`; `Phase9AutomationTests.cs` | Complete and verified | Phase 9 |
 | AUTO-01 | Auto Markdown/PDF export | `MeetingMarkdownAutoExporter.swift` | Markdown auto-export implemented. PDF auto-export missing | Implemented with verification debt | Phase 9 |
 | FOLLOW-01 | Follow-up workflow | `MeetingFollowUpPolicy.swift` | None | Missing | Phase 9 |
@@ -122,7 +122,7 @@ Owner modules are launch-program Phase 0–13. They are not the historical P0–
 | PRIV-01 | Local-first, explicit network, deletion | Privacy/auth/storage | Runtime + `WINDOWS_PRIVACY.md` + redaction/cleanup tests | Implemented with verification debt | Every / 13 |
 | UPD-01 | Signed auto-update | Sparkle | About → GitHub Releases only | Missing | Phase 13 |
 | SIGN-01 | Authenticode | codesign/notarize | `sign-windows-release.ps1`; artifacts unsigned | Externally blocked | Phase 13 / D5 |
-| PKG-01 | x64 zip + Inno installer | DMG/release scripts | Package/installer scripts exist; unsigned; upgrade/VM open | Partial | Phase 13 |
+| PKG-01 | x64 zip + Inno installer | DMG/release scripts | Package/installer scripts exist; unsigned; public inventory is CPU-only; upgrade/VM open | Partial | Phase 13 |
 | TEST-01 | Automated coverage | Swift test suite | 634 cases in the reviewed Wave 0 tree: 630 pass, 4 explicit qualification skips; no full GUI automation | Partial | Continuous |
 | QUAL-01 | Hardware/package gates | macOS release scripts | Scripts exist; current-tree hardware evidence not re-run | Partial | Phase 13 |
 | API-04 | Sparkle/AppKit/codesign equivalents | Updater/status-bar | NotifyIcon yes; signed updater no | Partial | Phase 13 |

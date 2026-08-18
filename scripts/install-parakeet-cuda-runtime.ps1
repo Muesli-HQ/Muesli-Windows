@@ -1,3 +1,18 @@
+<#
+.SYNOPSIS
+    Optional local helper that stages NVIDIA CUDA 12 / cuDNN 9 DLLs for a
+    version-matched sherpa-onnx CUDA provider.
+
+.DESCRIPTION
+    This script is NOT part of the public Wave 0 package. The ZIP and installer
+    ship the CPU Sherpa provider only. Do not describe a public build as
+    CUDA-capable because this script exists.
+
+    CUDA packaging, provenance, and NVIDIA hardware qualification are module L11.
+    Until L11 completes, this helper is optional external staging: it copies
+    selected CUDA Toolkit DLLs from a user install and may download pinned cuDNN
+    bits. It does not add CUDA files to the public package.
+#>
 param(
     [string]$CudaPath = $env:CUDA_PATH,
     [string]$DependencyDirectory = "",
