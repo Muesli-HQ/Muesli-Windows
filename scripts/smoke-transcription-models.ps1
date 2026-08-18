@@ -2,6 +2,7 @@ param(
     [string]$Configuration = "Debug",
     [string]$AudioPath,
     [string]$OutputDirectory,
+    [string]$CatalogPath,
     [int]$Runs = 1,
     [switch]$Prepare
 )
@@ -39,15 +40,22 @@ if ([string]::IsNullOrWhiteSpace($env:MUESLI_NATIVE_ASR_CACHE)) {
     $env:MUESLI_NATIVE_ASR_CACHE = Join-Path $env:USERPROFILE ".cache\muesli\native-asr"
 }
 
-$modelIds = @(
-    "parakeet-v3",
-    "whisper-tiny-en",
-    "whisper-small-en",
-    "whisper-medium-en",
-    "sensevoice-small-int8",
-    "qwen3-asr-0.6b-int8",
-    "cohere-transcribe-int8-en"
-)
+if ([string]::IsNullOrWhiteSpace($CatalogPath)) {
+    $CatalogPath = Join-Path $repoRoot "qualification\cpu-catalog\advertised-cpu-models.json"
+}
+$CatalogPath = [IO.Path]::GetFullPath($CatalogPath)
+if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) {
+    throw "Advertised CPU catalog not found: $CatalogPath"
+}
+$catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json
+if ($catalog.publicPackageCpuOnly -ne $true -or $catalog.cudaProviderIncluded -eq $true) {
+    throw "Advertised CPU catalog must remain publicPackageCpuOnly=true and cudaProviderIncluded=false."
+}
+$modelIds = @($catalog.models | ForEach-Object { $_.id })
+if ($modelIds.Count -eq 0) {
+    throw "Advertised CPU catalog contains no model IDs: $CatalogPath"
+}
+Write-Host "CPU catalog $($catalog.catalogId) status=$($catalog.status); models=$($modelIds.Count)"
 
 $failures = [Collections.Generic.List[string]]::new()
 foreach ($modelId in $modelIds) {
