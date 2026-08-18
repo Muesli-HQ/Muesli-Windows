@@ -19,8 +19,11 @@ rewrite.
 | `MigrationPlan.cs` | Maps that snapshot onto records, resolving duplicates and orphans. |
 | `JsonToSqliteMigrationService.cs` | Runs the import, verifies it, and can undo it. |
 | `PersistenceDigest.cs` | Content hashes used to prove an import was faithful. |
+| `Adapters/PersistenceCutover.cs` | L27 `EnsureMigrated`: JSON snapshot, digest import, fail closed. Unused at startup. |
+| `Adapters/SqliteLibraryHistoryAdapter.cs` | SQLite-backed `ILibraryHistoryAdapter` for tests. Dictionary stays JSON. |
+| `Adapters/PersistenceCutoverGate.cs` | Feature flag `L27SqliteHistoryCutover`, default **off**. |
 
-Start at `MuesliPersistenceStore`, which opens a database and hands back the five repositories.
+Start at `MuesliPersistenceStore`, which opens a database and hands back the five repositories. Production still uses `AppDataStore` until Agent E wires `PersistenceCutoverGate`.
 
 ## Decisions worth knowing before you change something
 

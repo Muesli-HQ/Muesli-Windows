@@ -63,6 +63,12 @@ public sealed record JsonToSqliteMigrationResult
 
     public string? Failure { get; init; }
 
+    /// <summary>
+    /// Dated copy of the JSON history files taken before import. Null when there was nothing to copy.
+    /// L27 does not delete this directory; retention is a later point.
+    /// </summary>
+    public string? JsonSnapshotDirectory { get; init; }
+
     public bool Succeeded => Outcome is JsonMigrationOutcome.Migrated
         or JsonMigrationOutcome.AlreadyCurrent
         or JsonMigrationOutcome.NothingToMigrate;
