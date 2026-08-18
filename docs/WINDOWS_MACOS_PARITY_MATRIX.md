@@ -79,7 +79,7 @@ Owner modules are launch-program Phase 0–13. They are not the historical P0–
 | SEC-01 | Secret storage and migration | Keychain tests | `SecretStore.cs`, `SecretsAndSettingsTests.cs` | Complete and verified | Phase 7 |
 | TPL-01 | Templates and re-summary | `MeetingTemplates.swift` | Built-in/custom templates in store/UI; Phase 7 tests | Implemented with verification debt | Phase 7 |
 | NOTE-01 | Manual notes vs generated summary | `MeetingNotesView.swift` | `PersistedMeeting.ManualNotes`, `MeetingNotesComposer.cs`; Phase 7 tests | Implemented with verification debt | Phase 7 |
-| ORG-01 | Nested folders | Meetings store/navigation | One-level `PersistedMeetingFolder`; no `ParentId` | Partial | Phase 8 |
+| ORG-01 | Nested folders | Meetings store/navigation | SQLite `FolderRecord.ParentId` exists and is tested. Product UI is still one-level `PersistedMeetingFolder`. Nested UI is L28 | Partial | Phase 8 |
 | SEARCH-01 | Search dictations and meetings | `SearchResultsView.swift` | Title/summary/transcript/metadata. Manual notes not indexed | Partial | Phase 8 / 12 |
 
 ## Import, export, automation
@@ -108,7 +108,7 @@ Owner modules are launch-program Phase 0–13. They are not the historical P0–
 | TRAY-01 | Rich tray menu | `StatusBarController.swift` | `TrayIconService.cs`; upcoming calendar row honestly disabled | Implemented with verification debt | Phase 12 |
 | FLOAT-01 | Floating recording indicator | `FloatingIndicatorController.swift` | `ToastNotificationService.cs` | Implemented with verification debt | Phase 2 / 12 |
 | FLOAT-02 | Waveform-hover live preview | Floating live transcript | `MeetingLiveTranscriptWindow` + `ShowLiveWaveformOnHover` | Implemented with verification debt | Phase 4 |
-| SHELL-01 | Light/dark dashboard | SwiftUI dashboard | `App.xaml`, `MainWindow.xaml` | Implemented with verification debt | Phase 12 |
+| SHELL-01 | Light/dark dashboard | SwiftUI dashboard | Themes and navigation exist. L02 (`df99ce9`, in `60fcb31`) embedded PerMonitorV2 in the executable manifest. Physical 100–200% and multi-monitor DPI proof is still open | Partial | Phase 12 |
 | START-01 | Launch at login | Login item | `StartupRegistrationService.cs` | Implemented with verification debt | Phase 12 |
 | INSTANCE-01 | Single-instance | App lifecycle | `SingleInstanceCoordinator.cs`; `ModelAndSingleInstanceTests.cs` | Complete and verified | Phase 12 |
 | INSIGHT-01 | Insights analyzer / share | `InsightsView.swift`, `InsightsWordAnalyzer.swift` | Dashboard stat cards only | Partial | Phase 12 / D4 |
@@ -149,6 +149,6 @@ Owner modules are launch-program Phase 0–13. They are not the historical P0–
 
 1. Windows already has a native local-first product: WPF, WASAPI, sherpa-onnx ASR/diarization, live Nemotron (off by default), notes, detection, import/export, hooks, onboarding, and optional Computer Use.
 2. The 2026-08-01 matrix was stale on manual notes, Ollama, live transcription, detection auto-stop, resumable onboarding, import cancellation, export tests, tray richness, and test counts.
-3. Remaining **implementation** is a short list (cleanup download, LM Studio, nested folders, search notes, transcript retranscribe, PDF auto-export, support bundle, updater). Remaining **qualification** is the larger launch risk.
+3. Remaining **implementation** is a short list (cleanup download, LM Studio, nested-folder UI, search notes, transcript retranscribe UI, PDF auto-export, support bundle, updater). Remaining **qualification** is the larger launch risk. SHELL-01 stays Partial until physical 100–200% and multi-monitor DPI proof exists. ORG-01 stays Partial until L28 exposes repository `ParentId` in the UI.
 4. Calendar/OAuth, Store, ChatGPT OAuth, CloudKit, audio sync, ARM64, and literal macOS ports are excluded, not “later P5 work.”
 5. Signing remains externally blocked. Unsigned zip/installer smoke is not a release.

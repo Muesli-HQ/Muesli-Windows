@@ -34,9 +34,10 @@ Implemented never means macOS parity. A source file, button, or historical bench
 | Offline ASR | Seven pinned sherpa-onnx choices; independent Dictation and Final meeting/import roles. |
 | Live ASR | Opt-in Nemotron 3.5; default Off; prepare does not select. CoreML Parakeet Realtime EOU absent. |
 | Hardware-free Wave 0 integration suite | **634** expanded xUnit cases in `Muesli.Windows.Tests`: **630 passed, 0 failed, 4 skipped** in both Debug and Release on .NET 10. This includes shell-view structure, complete action-handler wiring, and nested feature-event routing coverage. The four skips report their absent real-media, streaming-model, or multi-speaker qualification prerequisites instead of silently returning as passes. |
-| Wave 0 integration re-run | User-scoped SDK `10.0.400`; `dotnet build … --no-restore` completed with **0 warnings, 0 errors** in Debug and Release. `dotnet test … --no-restore` completed with **630 passed, 0 failed, 4 explicitly skipped** in each configuration. This is the reviewed working-tree baseline and remains uncommitted pending user review. |
+| Wave 0 committed baseline | `efa961ccbc78bb7b2b2542ca3f346ed2222d502a` (`codex/wave0-launch-foundation`). User-scoped SDK `10.0.400`; `dotnet build … --no-restore` completed with **0 warnings, 0 errors** in Debug and Release. `dotnet test … --no-restore` completed with **630 passed, 0 failed, 4 explicitly skipped** in each configuration. This is the committed Wave 0 evidence SHA. |
 | Wave 0 package smoke | Self-contained `muesli-windows-0.2.0-win-x64.zip` built successfully; required/forbidden artifact checks, fresh-machine QA, native startup diagnostic, and visible launch smoke passed. The diagnostic loaded the packaged CPU provider. Release metadata explicitly records that CUDA is not included. Inno Setup 6.7.1 also compiled `MuesliSetup-0.2.0-win-x64.exe` successfully; it was not installed or signed. |
-| L03 package truth (this branch) | Public notices, package metadata, and the generated native-runtime inventory now agree that Wave 0 ships the CPU Sherpa provider only. The false “primary package includes CUDA provider” sentence was removed. CUDA remains Partial / not in the public package (L11). QuestPDF 2026.5.0 still selects `LicenseType.Community`; EXP-01 is not complete. |
+| Wave 1 first-five integration | `60fcb31c56c0dba151f2ab98beb9daacabbf7e4c` (`origin/wave1-first-five` and `origin/codex/wave0-launch-foundation`). Includes L02 PerMonitorV2 executable-manifest assertion (`df99ce9`), L03 CPU-only package truth (`0771795`), L01/L27 cutover design (`7f3f3ae`), L23 unwired `TranscriptEditService` (`c06ab89`), and L14/L15 evidence setup (`1365458`). Physical DPI, CUDA packaging, L23 UI wiring, and Phase 2 corpus qualification remain open. |
+| L03 package truth | Public notices, package metadata, and the generated native-runtime inventory agree that Wave 0 ships the CPU Sherpa provider only (`0771795`, in `60fcb31`). The false “primary package includes CUDA provider” sentence was removed. CUDA remains Partial / not in the public package (L11). QuestPDF 2026.5.0 still selects `LicenseType.Community`; EXP-01 is not complete. |
 | Wave 0 visible shell check | After shell decomposition, Dashboard/Dictations, Meetings, Models, Settings, and About navigated successfully in dark and light themes. About showed `v0.2.0`; the original dark theme and foreground dashboard were restored. The 4,983-byte fresh log slice contained no `ERROR`, `Unhandled UI exception`, or `XamlParseException`. |
 | Historical CUDA/package/UI evidence from 2026-08-01–02 | Retained under `artifacts/` and older PHASE docs. **Not re-run for this ledger.** It does not promote any hardware-dependent row to Complete and verified. |
 | Architecture | x64 only. ARM64 packaging is excluded. |
@@ -151,7 +152,7 @@ Remaining class: **None** (done at the stated status), **Implementation**, **Qua
 | SEC-01 | Credential Manager keys; plaintext migration | Complete and verified | Phase 7 | None |
 | TPL-01 | Built-in/custom templates and re-summary | Implemented with verification debt | Phase 7 | Qualification: UI CRUD |
 | NOTE-01 | Manual notes separate from generated summary | Implemented with verification debt | Phase 7 | Qualification: editor UX. Re-summarize must not overwrite manual notes (unit-covered) |
-| ORG-01 | Nested meeting folders | Partial | Phase 8 | Implementation: one-level folders only; no `ParentId` |
+| ORG-01 | Nested meeting folders | Partial | Phase 8 | Implementation: SQLite `FolderRecord.ParentId` exists and is tested. Product UI is still one-level (`PersistedMeetingFolder` Id+Name). Nested UI is L28. Not Complete |
 | SEARCH-01 | Search dictations and meetings | Partial | Phase 8 / 12 | Implementation: meeting search is title/summary/transcript/metadata only; **manual notes are not indexed** |
 
 ### Import, export, automation
@@ -180,7 +181,7 @@ Remaining class: **None** (done at the stated status), **Implementation**, **Qua
 | TRAY-01 | Tray menu from real state | Implemented with verification debt | Phase 12 | Qualification: menu actions. Upcoming meetings row is honestly disabled (no calendar) |
 | FLOAT-01 | Draggable indicator with real levels and stop/cancel | Implemented with verification debt | Phase 2 / 12 | Qualification: DPI/multi-monitor/click |
 | FLOAT-02 | Optional live waveform on hover | Implemented with verification debt | Phase 4 | Qualification: hover DPI review |
-| SHELL-01 | Light/dark dashboard and navigation | Implemented with verification debt | Phase 12 | Qualification: keyboard, 100–200% DPI, multi-monitor. Uncommitted navigation extraction by another agent is not this ledger's evidence |
+| SHELL-01 | Light/dark dashboard and navigation | Partial | Phase 12 | L02 (`df99ce9`, in `60fcb31`) embedded PerMonitorV2 and asserts the built EXE manifest. Physical 100/125/150/200% and multi-monitor DPI proof is still open, so this is not Complete and verified. Keyboard qualification also remains |
 | START-01 | Launch at login | Implemented with verification debt | Phase 12 | Qualification: install/uninstall/elevation |
 | INSTANCE-01 | Single-instance activation | Complete and verified | Phase 12 | Visible second-instance click is optional manual confirmation |
 | INSIGHT-01 | Insights analyzer and contribution | Partial | Phase 12 / D4 | Implementation: dashboard stat cards only. Analyzer/share missing. Contribution telemetry is D4 |
@@ -207,9 +208,9 @@ Ordered by launch module. Calendar/OAuth, Store, ChatGPT OAuth, CloudKit, audio 
 |---|---|
 | Phase 1 | Guided Qwen cleanup catalog/download only after an approved GGUF (MOD-05). |
 | Phase 2 | Optional: apply filler filtering to meeting/import with the same settings as dictation (TXT-03). AUD-03 stays decision-gated. |
-| Phase 5 / 7 | Editable transcript and safe retranscribe that cannot destroy the prior record (MTG-03). |
+| Phase 5 / 7 | Editable transcript and safe retranscribe that cannot destroy the prior record (MTG-03). L23 `TranscriptEditService` exists and is unwired; the UI transcript remains read-only. |
 | Phase 7 | LM Studio or documented custom HTTP summary adapter (SUM-02 remainder). |
-| Phase 8 | Nested folders (ORG-01). Index manual notes in search (SEARCH-01). Playback waveform if still desired (PLAY-01 remainder). |
+| Phase 8 | Nested folder product UI (ORG-01): repository `ParentId` exists; UI nesting does not. Index manual notes in search (SEARCH-01). Playback waveform if still desired (PLAY-01 remainder). |
 | Phase 9 | PDF auto-export if product still wants AUTO-01 parity. FOLLOW-01 only after a destination contract. |
 | Phase 10 | Observation masking if text/screenshots are ever enabled (CU-01 residual). |
 | Phase 11 | Nothing until D3. |
@@ -232,7 +233,7 @@ This is not missing code. Do not treat it as implementation backlog.
 | Phase 8 | Per-format import ASR/diarization; human PDF/MD open. |
 | Phase 9 | Optional real hook executable smoke. |
 | Phase 10 | Sandboxed Computer Use workflow. |
-| Phase 12 | Clean-profile onboarding; DPI 100/125/150/200; multi-monitor; tray/startup. `verify-phase12-ui.ps1 -ValidateOnly` is a contract check, not capture evidence. |
+| Phase 12 | Clean-profile onboarding; physical DPI 100/125/150/200 and multi-monitor (SHELL-01 stays Partial until that matrix exists; L02 already embedded PerMonitorV2 in the executable); tray/startup. `verify-phase12-ui.ps1 -ValidateOnly` is a contract check, not capture evidence. |
 | Phase 13 | Signed zip/installer; clean VM install/upgrade/uninstall; fresh-log packaged launch. |
 
 ## External decisions
@@ -247,9 +248,16 @@ This is not missing code. Do not treat it as implementation backlog.
 | D6 | Catalog changes | Already resolved for the seven offline + Nemotron live set. Re-open only to add/remove models |
 | AUD-03 | Media ducking | Pause vs duck vs none |
 
-## Obsolete branches — do not merge wholesale
+## Current line of work
 
-Current line of work: `docs/native-architecture-and-roadmap` (`e8c1778` at inventory start). `main` is an ancestor at `ba38e56` (“Checkpoint launch-ready Python pipeline”) and must not be used as a merge source for native work.
+| Line | SHA | Fact |
+|---|---|---|
+| Wave 0 launch foundation | `efa961ccbc78bb7b2b2542ca3f346ed2222d502a` (`codex/wave0-launch-foundation`) | Committed Wave 0 baseline. |
+| Wave 1 first-five integration | `60fcb31c56c0dba151f2ab98beb9daacabbf7e4c` (`origin/wave1-first-five` and `origin/codex/wave0-launch-foundation`) | Integrates L02, L03, L01/L27 design, L23 service, L14/L15 evidence setup. This L00 ledger is based here. |
+
+Do not treat `docs/native-architecture-and-roadmap` (`e8c1778`) as current. `main` is an ancestor at `ba38e56` (“Checkpoint launch-ready Python pipeline”) and must not be used as a merge source for native work.
+
+## Obsolete branches — do not merge wholesale
 
 Feature/refactor/test branches that **are already merged** into HEAD are historical slices. Re-merging them is unnecessary.
 
@@ -276,6 +284,8 @@ These remain useful as contracts or old evidence. They are **not** status source
 |---|---|
 | `WINDOWS_EXECUTION_PLAN.md` | Historical P0–P8 sequencing and still-valid engineering rules. Status and module IDs live here. |
 | `WINDOWS_MACOS_PARITY_MATRIX.md` | Capability ID catalog + macOS mapping. Statuses must match this ledger. |
+| `WINDOWS_MULTI_AGENT_LAUNCH_PLAN.md` | Execution and ownership. Not a status source. |
+| `L01_PERSISTENCE_CUTOVER.md` | L01/L27 design and characterization. Not a status source. ORG-01 ParentId truth lives here; L00 owns ledger wording. |
 | `ROADMAP.md` | Short remaining-work view pointing here. |
 | `PHASE2_DICTATION_QUALIFICATION.md` | Current fail-closed **qualification** spec for Phase 2. |
 | `PHASE3_QUALIFICATION.md` | Current fail-closed **qualification** spec for Phase 3. |
@@ -309,7 +319,11 @@ These remain useful as contracts or old evidence. They are **not** status source
 | Tray is Open/Quit only | Recent items, detected now, resume setup, tour, settings, about. Upcoming calendar honestly disabled |
 | Search cannot index notes because notes do not exist | Notes exist; search still does not index them |
 | Phase 5 = calendar | Launch Phase 5 = finalization. Calendar is excluded |
+| Nested folders have no `ParentId` | SQLite `FolderRecord.ParentId` exists and is tested; product UI is still one-level. ORG-01 stays Partial until L28 |
+| SHELL-01 Complete / only keyboard qualification remains | L02 embedded PerMonitorV2 (`df99ce9`); physical 100–200% + multi-monitor DPI proof is still missing, so SHELL-01 is Partial |
+| Current branch is `docs/native-architecture-and-roadmap` (`e8c1778`) | Current integration SHA is `60fcb31`; Wave 0 baseline is `efa961c` |
+| Bare gitignore `models/` is harmless | Windows git is case-insensitive; that pattern hid C# `Models/` sources. L00 uses `/models/` for the repo-root cache |
 
 ## Concurrent work notice
 
-Wave 0 integration reviewed the uncommitted `.NET 10` retarget, release identity, installer/CI script edits, `MainWindow` partial-class split, navigation/dialog abstractions, meeting-pipeline extraction, SQLite repository substrate, sound-feedback slice, and expanded tests together. The build and test facts above describe this reviewed working tree; do not merge stale feature branches wholesale on top of it.
+Wave 0 is committed at `efa961c`. Wave 1 first-five is integrated at `60fcb31`. The `.NET 10` retarget, release identity, installer/CI script edits, `MainWindow` partial-class split, navigation/dialog abstractions, meeting-pipeline extraction, SQLite repository substrate, sound-feedback slice, and expanded tests live on that line. Do not merge stale feature branches wholesale on top of it.
