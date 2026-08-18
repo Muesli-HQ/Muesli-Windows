@@ -96,7 +96,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 
 $root = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $root 'windows-native\Muesli.Windows\bin\Debug\net8.0-windows\Muesli.exe'
+$exe = Join-Path $root 'windows-native\Muesli.Windows\bin\Debug\net10.0-windows\Muesli.exe'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Build output missing: $exe" }
 
 $outputFull = [IO.Path]::GetFullPath($OutputDirectory)

@@ -6,11 +6,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "read-release-properties.ps1")
+$release = Get-MuesliReleaseProperties -Root $root
 $project = Join-Path $root "windows-native\Muesli.Windows\Muesli.Windows.csproj"
 $publishRoot = Join-Path $root "publish"
 $publishDir = Join-Path $publishRoot "muesli-windows-$Runtime"
 $artifactsDir = Join-Path $root "artifacts"
-$zipPath = Join-Path $artifactsDir "muesli-windows-0.2.0-$Runtime.zip"
+$portableZipName = "muesli-windows-$($release.Version)-$Runtime.zip"
+$zipPath = Join-Path $artifactsDir $portableZipName
 $lastPublishFile = Join-Path $artifactsDir "last-publish-dir.txt"
 
 if (Test-Path $publishDir) {
@@ -32,6 +35,9 @@ if (Test-Path $publishDir) {
 }
 New-Item -ItemType Directory -Force -Path $publishDir | Out-Null
 New-Item -ItemType Directory -Force -Path $artifactsDir | Out-Null
+if (Test-Path $zipPath) {
+    Remove-Item -LiteralPath $zipPath -Force
+}
 
 dotnet publish $project `
     -c $Configuration `
@@ -40,6 +46,9 @@ dotnet publish $project `
     -p:PublishSingleFile=false `
     -p:PublishReadyToRun=true `
     -o $publishDir
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet publish failed with exit code $LASTEXITCODE. No release package was produced."
+}
 
 $satelliteCultureDirs = @(
     "cs", "de", "es", "fr", "it", "ja", "ko", "pl", "pt-BR", "ru", "tr", "zh-Hans", "zh-Hant"
@@ -57,7 +66,7 @@ Get-ChildItem -LiteralPath $publishDir -Recurse -File -Filter "*.pdb" -ErrorActi
     Remove-Item -Force
 
 $readme = @"
-Muesli for Windows 0.2.0
+Muesli for Windows $($release.Version)
 ========================
 
 Run:
@@ -68,9 +77,14 @@ Install:
   Optional:
     powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -StartAtLogin
 
-Current v1 requirements:
+Current $($release.Channel) requirements:
   - Windows x64.
   - No Python, venv, or external worker runtime is required.
+
+Supported environments:
+  - $($release.SupportedEnvironments -join "`n  - ")
+  - Windows 10 22H2 uses truthful endpoint-loopback for meeting system audio; process-targeted capture is not promised or attempted there.
+  - Current serviced Windows 11 x64 releases may attempt process-tree loopback when supported and fall back to disclosed endpoint-loopback when unavailable.
 
 Default shortcut:
   Hold the configured shortcut to dictate. Release it to transcribe and paste into the previously focused app.
@@ -81,10 +95,7 @@ Notes:
   - Dictation and final meeting/import roles are selected independently. Live meeting transcription is Off until a packaged streaming model is qualified.
   - Model preparation is explicit and network-backed. Selecting or downloading does not activate a recognizer.
   - Archives and every runtime-required model file are verified against pinned SHA-256 hashes before use.
-  - The package includes the version-matched Sherpa CUDA provider. NVIDIA GPU acceleration requires CUDA Toolkit 12.x and cuDNN 9.x dependencies.
-  - On an NVIDIA system, install the optional dependencies once with:
-      powershell -ExecutionPolicy Bypass -File .\install-parakeet-cuda-runtime.ps1
-    Restart Muesli afterward. CPU-only systems do not need this step.
+  - This Wave 0 package includes the CPU Sherpa provider. It does not claim NVIDIA acceleration; a version-matched CUDA provider still has to pass the Wave 5 packaging and hardware qualification gates.
   - Supported offline models emit timestamped segments for recorded meetings and native diarization alignment where the backend supplies token timing.
   - Recorded meetings use native sherpa-onnx diarization for speaker labels when system audio is available.
   - Qwen cleanup can run locally through native LLamaSharp / llama.cpp with a GGUF model and does not use Python.
@@ -103,8 +114,10 @@ Notes:
 
 Set-Content -LiteralPath (Join-Path $publishDir "README-WINDOWS.txt") -Value $readme -Encoding UTF8
 $releaseNotes = @"
-Muesli Windows v0.2.0 Release Notes
+Muesli Windows v$($release.Version) Release Notes
 ===================================
+
+Release channel: $($release.Channel)
 
 This build is a native Windows WPF clone of the shipped macOS Muesli app.
 
@@ -117,19 +130,22 @@ Highlights:
   - First-run onboarding for microphone, shortcut, startup, indicator, and model readiness.
   - Native Parakeet, Whisper, SenseVoice, Qwen3-ASR, and Cohere ASR through sherpa-onnx ONNX.
   - Explicit model preparation with pinned archive/file SHA-256 verification and visible progress.
-  - Version-matched Sherpa ONNX 1.13.4 CUDA provider with explicit CUDA 12/cuDNN 9 diagnostics.
+  - Self-contained Sherpa ONNX 1.13.4 CPU runtime with native startup diagnostics.
   - Native sherpa-onnx speaker diarization for recorded meeting transcripts.
   - Optional native Qwen/GGUF cleanup through LLamaSharp, disabled by default.
 
 Known release requirements:
+  - Supported environments: $($release.SupportedEnvironments -join "; ").
+  - Windows 10 22H2 uses endpoint-loopback for meeting system audio; process-targeted capture is not supported or promised.
+  - Current serviced Windows 11 x64 releases attempt process-tree loopback only when the live target and operating-system capability are present; endpoint-loopback fallback is disclosed.
   - Selecting a role never downloads or activates a model; a missing selected role fails closed until prepared.
-  - Supported models use CUDA when its optional NVIDIA dependency pack is installed; otherwise the same model and engine use CPU.
+  - The public package currently uses the CPU provider. NVIDIA provider packaging remains a separately qualified release task.
   - Native diarization models download into the user model cache on first recorded meeting use.
   - Native Qwen cleanup requires a compatible GGUF model in the native-cleanup cache.
   - Installer is not code-signed until a real signing certificate is configured.
 
 Fresh-machine validation checklist:
-  1. Install using MuesliSetup-0.2.0-win-x64.exe.
+  1. Install using MuesliSetup-$($release.Version)-win-x64.exe.
   2. Confirm onboarding appears once.
   3. Pick a microphone and a shortcut that is not reserved by the test laptop.
   4. Run Models > Check setup.
@@ -145,6 +161,40 @@ Signing, target-application paste confirmation, transcription-quality review, an
 fresh-machine installer run require separate release evidence.
 "@
 Set-Content -LiteralPath (Join-Path $publishDir "RELEASE-NOTES.txt") -Value $releaseNotes -Encoding UTF8
+
+$releaseMetadata = [ordered]@{
+    schemaVersion = 1
+    product = "Muesli for Windows"
+    version = $release.Version
+    channel = $release.Channel
+    targetFramework = "net10.0-windows"
+    runtime = $Runtime
+    architecture = "x64"
+    selfContained = $true
+    minimumWindowsVersion = $release.MinimumWindowsVersion
+    supportedEnvironments = $release.SupportedEnvironments
+    package = [ordered]@{
+        portableZip = $portableZipName
+        installer = "MuesliSetup-$($release.Version)-win-x64.exe"
+        releaseNotes = "RELEASE-NOTES.txt"
+    }
+    update = [ordered]@{
+        channel = $release.Channel
+        version = $release.Version
+        package = $portableZipName
+        releaseNotes = "RELEASE-NOTES.txt"
+    }
+    meetingAudioCapture = [ordered]@{
+        windows10 = "Endpoint loopback only; process-targeted capture is not supported on Windows 10 22H2."
+        windows11 = "Process-tree loopback is attempted only when the serviced OS and live target support it; endpoint-loopback fallback is disclosed."
+    }
+    transcriptionRuntime = [ordered]@{
+        cpuProviderIncluded = $true
+        cudaProviderIncluded = $false
+        cudaQualificationModule = "Wave 5"
+    }
+}
+$releaseMetadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $publishDir $release.MetadataFileName) -Encoding UTF8
 
 $shipChecklist = @"
 Muesli Windows Human Ship Checklist
@@ -172,7 +222,8 @@ Core dictation:
 Runtime / models:
   [ ] Native diarization model status reports correctly.
   [ ] Every offline model reports Missing, Downloading, Verifying, Ready/Selected, Failed, Runtime unavailable, or Deletion failed accurately.
-  [ ] Supported models report CUDA on a supported NVIDIA test machine after install-parakeet-cuda-runtime.ps1.
+  [ ] The package reports CPU truthfully and does not claim a CUDA provider is included.
+  [ ] Before a later NVIDIA release, stage a version-matched CUDA provider and pass the dedicated GPU hardware matrix.
   [ ] Qwen cleanup status reports Disabled, Needs model, Ready, or Runtime unavailable.
   [ ] Every catalog archive and required runtime file passes pinned SHA-256 verification and works offline after preparation.
   [ ] Every supported family completes real-audio inference; Parakeet is additionally tested on a CPU-only machine.
@@ -203,14 +254,10 @@ Release:
 Set-Content -LiteralPath (Join-Path $publishDir "SHIP-CHECKLIST.txt") -Value $shipChecklist -Encoding UTF8
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Destination (Join-Path $publishDir "install-windows.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination (Join-Path $publishDir "uninstall-windows.ps1") -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-parakeet-cuda-runtime.ps1") -Destination (Join-Path $publishDir "install-parakeet-cuda-runtime.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination (Join-Path $publishDir "THIRD-PARTY-NOTICES.md") -Force
 Copy-Item -LiteralPath (Join-Path $root "licenses") -Destination (Join-Path $publishDir "licenses") -Recurse -Force
 Set-Content -LiteralPath $lastPublishFile -Value $publishDir -Encoding UTF8
 
-if (Test-Path $zipPath) {
-    Remove-Item -LiteralPath $zipPath -Force
-}
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath
 
 Write-Host "Created $zipPath"

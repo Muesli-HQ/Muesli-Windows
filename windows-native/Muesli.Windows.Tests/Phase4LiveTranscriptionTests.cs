@@ -543,11 +543,10 @@ public sealed class Phase4LiveTranscriptionTests(Xunit.Abstractions.ITestOutputH
         writer.Write(new byte[sampleRate * 2 * seconds], 0, sampleRate * 2 * seconds);
     }
 
-    [Fact]
+    [QualificationFact("MUESLI_STREAMING_QUALIFICATION_MODEL")]
     public async Task QualifiedArtifactPerformsRealInferenceWhenQualificationPathIsProvided()
     {
-        var root = Environment.GetEnvironmentVariable("MUESLI_STREAMING_QUALIFICATION_MODEL");
-        if (string.IsNullOrWhiteSpace(root)) return;
+        var root = Environment.GetEnvironmentVariable("MUESLI_STREAMING_QUALIFICATION_MODEL")!;
         var catalog = StreamingModelCatalog.Models[0];
         var model = catalog with { DirectoryName = Path.GetFullPath(root) };
         await new StreamingModelInstaller(model).VerifyAndStampAsync(null, CancellationToken.None);

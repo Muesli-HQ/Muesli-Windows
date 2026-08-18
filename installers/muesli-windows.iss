@@ -1,9 +1,11 @@
 #define MyAppName "Muesli"
-#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Muesli contributors"
 #define MyAppExeName "Muesli.exe"
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by scripts\build-installer.ps1.
+#endif
 #ifndef PublishSource
-#define PublishSource "..\publish\muesli-windows-win-x64"
+  #error PublishSource must be supplied by scripts\build-installer.ps1.
 #endif
 
 [Setup]

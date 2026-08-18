@@ -5,6 +5,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "read-release-properties.ps1")
+$release = Get-MuesliReleaseProperties -Root $root
 $packageScript = Join-Path $root "scripts\package-windows-v1.ps1"
 $installerScript = Join-Path $root "installers\muesli-windows.iss"
 $lastPublishFile = Join-Path $root "artifacts\last-publish-dir.txt"
@@ -35,7 +37,10 @@ $publishSource = if (Test-Path $lastPublishFile) {
     Join-Path $root "publish\muesli-windows-win-x64"
 }
 
-& $InnoSetupCompiler "/DPublishSource=$publishSource" $installerScript
+& $InnoSetupCompiler "/DPublishSource=$publishSource" "/DMyAppVersion=$($release.Version)" $installerScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Inno Setup failed with exit code $LASTEXITCODE."
+}
 
 $installer = Get-ChildItem -LiteralPath (Join-Path $root "artifacts") -Filter "MuesliSetup-*-win-x64.exe" |
     Sort-Object LastWriteTime -Descending |

@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "read-release-properties.ps1")
+$release = Get-MuesliReleaseProperties -Root $repoRoot
+
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
@@ -17,6 +21,7 @@ $required = @(
     "Muesli.dll",
     "README-WINDOWS.txt",
     "RELEASE-NOTES.txt",
+    $release.MetadataFileName,
     "SHIP-CHECKLIST.txt",
     "WINDOWS-PRIVACY.md",
     "THIRD-PARTY-NOTICES.md",
@@ -28,9 +33,7 @@ $required = @(
     "licenses\QuestPDF-2026.5.0.md",
     "Assets\menu_m_template@2x.png",
     "install-windows.ps1",
-    "uninstall-windows.ps1",
-    "install-parakeet-cuda-runtime.ps1",
-    "native-sherpa-cuda\native-sherpa-cuda-runtime.json"
+    "uninstall-windows.ps1"
 )
 
 foreach ($item in $required) {
@@ -52,7 +55,9 @@ $forbidden = @(
     "qualify-windows-release.ps1",
     "summarize-dictation-latency.ps1",
     "test-transcription-corpus.ps1",
-    "qualify-dictation-target.ps1"
+    "qualify-dictation-target.ps1",
+    "install-parakeet-cuda-runtime.ps1",
+    "native-sherpa-cuda"
 )
 foreach ($item in $forbidden) {
     $path = Join-Path $InstallDir $item
@@ -99,20 +104,6 @@ Assert-NativeRuntimeFile -Pattern "sherpa-onnx-c-api.dll" -Description "sherpa-o
 Assert-NativeRuntimeFile -Pattern "onnxruntime.dll" -Description "ONNX Runtime native runtime"
 Assert-NativeRuntimeFile -Pattern "LLamaSharp.dll" -Description "LLamaSharp managed cleanup runtime"
 Assert-NativeRuntimeFile -Pattern "llama.dll" -Description "llama.cpp native cleanup runtime"
-
-$sherpaCudaManifestPath = Join-Path $InstallDir "native-sherpa-cuda\native-sherpa-cuda-runtime.json"
-$sherpaCudaManifest = Get-Content -LiteralPath $sherpaCudaManifestPath -Raw | ConvertFrom-Json
-if ($sherpaCudaManifest.schemaVersion -ne 1 -or
-    $sherpaCudaManifest.runtimeKind -ne "native-sherpa-onnx-cuda" -or
-    $sherpaCudaManifest.runtimeVersion -ne "1.13.4") {
-    throw "Sherpa CUDA runtime manifest is invalid: $sherpaCudaManifestPath"
-}
-$sherpaCudaMissing = @($sherpaCudaManifest.requiredRuntimeFiles | Where-Object {
-    -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $sherpaCudaManifestPath) $_))
-})
-if ($sherpaCudaMissing.Count -gt 0) {
-    throw "Sherpa CUDA runtime is incomplete. Missing: $($sherpaCudaMissing -join ', ')"
-}
 
 $forbiddenPatterns = @("Outlook.Application", "Microsoft.Office.Interop.Outlook", "MAPI")
 $sourceFiles = @(

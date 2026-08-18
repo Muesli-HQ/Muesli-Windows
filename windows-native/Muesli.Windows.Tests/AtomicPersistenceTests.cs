@@ -82,11 +82,18 @@ public sealed class AtomicPersistenceTests
         var path = directory.File("locked.json");
         new AtomicJsonFile().Save(path, new[] { "valid" });
         using var exclusiveStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
-        var release = Task.Run(async () =>
-        {
-            await Task.Delay(40);
-            exclusiveStream.Dispose();
-        });
+        // Use a dedicated thread: the full suite deliberately creates thread-pool pressure, and a
+        // delayed pool continuation can otherwise keep this synthetic 40 ms lock alive beyond the
+        // production retry window and turn the test into a scheduler lottery.
+        var release = Task.Factory.StartNew(
+            () =>
+            {
+                Thread.Sleep(40);
+                exclusiveStream.Dispose();
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
         AtomicJsonLoadResult<string[]> result;
         try

@@ -1,0 +1,114 @@
+<features:FeatureViewBase x:Class="Muesli.Windows.Features.About.AboutView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:features="clr-namespace:Muesli.Windows.Features">
+  <Grid x:Name="AboutPage">
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      Padding="0,0,12,0">
+        <StackPanel MaxWidth="760" Margin="0,0,0,24">
+          <TextBlock Text="About" Style="{StaticResource PageTitle}" />
+          <TextBlock Text="{Binding PreviewPageStateMessage}" Margin="0,4,0,0" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+          <Border Style="{StaticResource ContentCard}">
+            <StackPanel>
+              <TextBlock Text="Setup and tour" Style="{StaticResource SettingsRowLabel}" />
+              <TextBlock Text="Resume deferred setup safely, or revisit the feature tour. Setup progress never contains transcripts or provider secrets." Margin="0,4,0,12" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal">
+                <Button Style="{StaticResource SecondaryButton}" Content="Resume Setup" Click="ForwardClick" features:FeatureAction.Name="ResumeSetup_Click" AutomationProperties.Name="Resume Muesli setup" />
+                <Button Margin="10,0,0,0" Style="{StaticResource SecondaryButton}" Content="Feature Tour" Click="ForwardClick" features:FeatureAction.Name="FeatureTour_Click" AutomationProperties.Name="Open feature tour" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+          <TextBlock Text="APP INFO" Style="{StaticResource SectionLabel}" />
+          <Border Style="{StaticResource ContentCard}">
+            <StackPanel>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Version" Style="{StaticResource SettingsRowLabel}" />
+                <TextBlock Grid.Column="1" Text="{Binding AppVersion}" FontFamily="Consolas" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+              </Grid>
+              <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Releases" Style="{StaticResource SettingsRowLabel}" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="View Releases" Click="ForwardClick" features:FeatureAction.Name="CheckForUpdates_Click" AutomationProperties.Name="Check for Muesli updates" />
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Text="SUPPORT" Style="{StaticResource SectionLabel}" />
+          <Border Style="{StaticResource ContentCard}">
+            <StackPanel>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Support Development" Style="{StaticResource SettingsRowLabel}" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Donate" Background="{DynamicResource SuccessGreenBrush}" Foreground="{DynamicResource DonateButtonForegroundBrush}" Click="ForwardClick" features:FeatureAction.Name="Donate_Click" />
+              </Grid>
+              <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Source Code" Style="{StaticResource SettingsRowLabel}" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="View on GitHub" Click="ForwardClick" features:FeatureAction.Name="ViewGitHub_Click" />
+              </Grid>
+              <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Logs" Style="{StaticResource SettingsRowLabel}" />
+                  <TextBlock Text="Attach these when reporting microphone, paste, meeting recording, or model setup issues." Margin="0,4,0,0" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Open Logs" Click="ForwardClick" features:FeatureAction.Name="OpenLogs_Click" AutomationProperties.Name="Open Muesli logs" />
+              </Grid>
+              <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Audio storage" Style="{StaticResource SettingsRowLabel}" />
+                  <TextBlock Text="Inspect and remove legacy or interrupted capture files. Saved meeting recordings, imports, transcripts, settings, and models are excluded." Margin="0,4,18,0" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Inspect Captures" Click="ForwardClick" features:FeatureAction.Name="CleanupCaptures_Click" AutomationProperties.Name="Inspect local capture storage" />
+              </Grid>
+              <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Privacy" Style="{StaticResource SettingsRowLabel}" />
+                  <TextBlock Text="Review local storage, model downloads, meeting detection, logs, and optional cloud transcript processing." Margin="0,4,18,0" FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Open Privacy" Click="ForwardClick" features:FeatureAction.Name="OpenPrivacy_Click" AutomationProperties.Name="Open privacy information" />
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Text="ACKNOWLEDGEMENTS" Style="{StaticResource SectionLabel}" />
+          <Border Style="{StaticResource ContentCard}">
+            <StackPanel>
+              <TextBlock Text="Native sherpa-onnx transcription" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+              <TextBlock Text="Local Parakeet, Whisper, SenseVoice, Qwen3-ASR, and Cohere inference through sherpa-onnx and ONNX Runtime." Margin="0,4,0,12" FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+        </ScrollViewer>
+      </Grid>
+</features:FeatureViewBase>

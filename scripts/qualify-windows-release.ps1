@@ -23,8 +23,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "read-release-properties.ps1")
+$release = Get-MuesliReleaseProperties -Root $root
 if ([string]::IsNullOrWhiteSpace($PackagePath)) {
-    $PackagePath = Join-Path $root "artifacts\muesli-windows-0.2.0-win-x64.zip"
+    $PackagePath = Join-Path $root "artifacts\muesli-windows-$($release.Version)-win-x64.zip"
 }
 $resolvedPackage = (Resolve-Path -LiteralPath $PackagePath).Path
 $resolvedAudio = (Resolve-Path -LiteralPath $AudioPath).Path
@@ -204,6 +206,10 @@ try {
     $report = [ordered]@{
         schemaVersion = 1
         createdAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
+        releaseVersion = $release.Version
+        releaseChannel = $release.Channel
+        minimumWindowsVersion = $release.MinimumWindowsVersion
+        supportedEnvironments = $release.SupportedEnvironments
         passed = $failures.Count -eq 0
         failures = $failures
         machine = Get-MachineEvidence
