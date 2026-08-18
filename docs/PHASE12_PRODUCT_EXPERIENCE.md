@@ -14,7 +14,7 @@ Run `powershell -ExecutionPolicy Bypass -File scripts\verify-phase12-ui.ps1 -Val
 
 The script launches the isolated preview, foregrounds its real HWND, requires `GetDpiForWindow` to equal the requested scale (100/125/150/200 = 96/120/144/192 DPI), then records the actual window/monitor bounds and PNG path in JSON. It refuses a DPI mismatch and never changes Windows scale. Repeat the same command after moving the preview to every real monitor, or in each VM at the required scale; the matrix and one-host capture do not claim physical multi-monitor coverage by themselves. A scaled viewport is not evidence of Windows per-monitor DPI behavior. The placement service uses the target monitor work area and window DPI, not the primary `SystemParameters.WorkArea`.
 
-Muesli embeds an explicit application manifest with `dpiAwareness` set to `PerMonitorV2, PerMonitor` for Windows 10+ and the `dpiAware` `true/pm` fallback for older Windows. WPF owns startup; no conflicting WinForms `HighDpiMode` call is made.
+Muesli embeds an explicit application manifest with `dpiAwareness` set to `PerMonitorV2, PerMonitor` for Windows 10+ and the `dpiAware` `true/pm` fallback for older Windows. The source of truth is `windows-native/Muesli.Windows/app.manifest` embedded as `Muesli.exe` RT_MANIFEST; automated tests extract that built resource rather than grepping the csproj string. WPF owns startup via `<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>` with no conflicting WinForms `HighDpiMode` call. Physical 125/150/200% and multi-monitor captures remain remaining gates after a 100% smoke.
 
 ## Privacy and support
 

@@ -297,12 +297,10 @@ public sealed class Phase12ProductExperienceTests
     {
         var root = FindRepositoryRoot();
         var project = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Muesli.Windows.csproj"));
-        var manifest = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "app.manifest"));
         Assert.Contains("<ApplicationManifest>app.manifest</ApplicationManifest>", project);
         Assert.Contains("<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>", project);
-        Assert.DoesNotContain("http://schemas.microsoft.com/SMI/2005/WindowsSettings", manifest);
-        Assert.DoesNotContain("http://schemas.microsoft.com/SMI/2016/WindowsSettings", manifest);
         Assert.DoesNotContain("SetHighDpiMode", File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "App.xaml.cs")));
+        // Built RT_MANIFEST dpiAware/dpiAwareness assertions live in DpiManifestAndPlacementTests.
     }
 
     [Fact]

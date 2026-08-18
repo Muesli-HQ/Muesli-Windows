@@ -53,6 +53,66 @@ function Assert-ExactEnum([string]$Name, [string]$Value, [string[]]$Allowed) {
     }
 }
 
+function Assert-BuiltExecutableDpiManifest([string]$ExePath) {
+    if (-not ('L02ManifestNative' -as [type])) {
+        Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class L02ManifestNative {
+    private const uint LoadLibraryAsDatafile = 0x00000002;
+    private const uint LoadLibraryAsImageResource = 0x00000020;
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint dwFlags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr FindResource(IntPtr hModule, IntPtr lpName, IntPtr lpType);
+    [DllImport("kernel32.dll")] private static extern IntPtr LoadResource(IntPtr hModule, IntPtr hResInfo);
+    [DllImport("kernel32.dll")] private static extern IntPtr LockResource(IntPtr hResData);
+    [DllImport("kernel32.dll")] private static extern uint SizeofResource(IntPtr hModule, IntPtr hResInfo);
+    [DllImport("kernel32.dll")] private static extern bool FreeLibrary(IntPtr hModule);
+    public static string ExtractRtManifest(string executablePath) {
+        var module = LoadLibraryEx(executablePath, IntPtr.Zero, LoadLibraryAsDatafile | LoadLibraryAsImageResource);
+        if (module == IntPtr.Zero) throw new InvalidOperationException("LoadLibraryEx failed for RT_MANIFEST extraction.");
+        try {
+            var resource = FindResource(module, new IntPtr(1), new IntPtr(24));
+            if (resource == IntPtr.Zero) throw new InvalidOperationException("Built executable has no RT_MANIFEST resource.");
+            var size = SizeofResource(module, resource);
+            var data = LoadResource(module, resource);
+            if (size == 0 || data == IntPtr.Zero) throw new InvalidOperationException("RT_MANIFEST could not be loaded.");
+            var bytes = new byte[size];
+            Marshal.Copy(LockResource(data), bytes, 0, (int)size);
+            if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+            return Encoding.UTF8.GetString(bytes);
+        }
+        finally { FreeLibrary(module); }
+    }
+}
+'@
+    }
+
+    $manifest = [L02ManifestNative]::ExtractRtManifest($ExePath)
+    if ($manifest -notmatch '(?i)PerMonitorV2\s*,\s*PerMonitor') {
+        throw "Built executable RT_MANIFEST is missing dpiAwareness PerMonitorV2, PerMonitor."
+    }
+    if ($manifest -notmatch '(?i)true/pm') {
+        throw "Built executable RT_MANIFEST is missing legacy dpiAware true/pm."
+    }
+    if ($manifest -notmatch 'http://schemas.microsoft.com/SMI/2016/WindowsSettings') {
+        throw "Built executable RT_MANIFEST is missing the SMI/2016 dpiAwareness namespace."
+    }
+    if ($manifest -notmatch 'http://schemas.microsoft.com/SMI/2005/WindowsSettings') {
+        throw "Built executable RT_MANIFEST is missing the SMI/2005 dpiAware namespace."
+    }
+    if ($manifest -notmatch 'asInvoker') {
+        throw "Built executable RT_MANIFEST must keep requestedExecutionLevel asInvoker."
+    }
+    if ($manifest -match 'requireAdministrator') {
+        throw "Built executable RT_MANIFEST must not request requireAdministrator."
+    }
+    Write-Host "Built executable RT_MANIFEST declares dpiAwareness PerMonitorV2, PerMonitor and dpiAware true/pm."
+}
+
 Assert-ExactEnum 'PageCase' $PageCase $pageCases
 Assert-ExactEnum 'Theme' $Theme $themes
 Assert-ExactEnum 'Size' $Size $sizes
@@ -98,6 +158,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $root 'windows-native\Muesli.Windows\bin\Debug\net10.0-windows\Muesli.exe'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Build output missing: $exe" }
+Assert-BuiltExecutableDpiManifest -ExePath $exe
 
 $outputFull = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $outputFull | Out-Null

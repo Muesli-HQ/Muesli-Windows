@@ -9,9 +9,13 @@
     <AssemblyName>Muesli</AssemblyName>
     <RootNamespace>Muesli.Windows</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Custom ApplicationManifest replaces the SDK-generated Win32 manifest, so PerMonitorV2
+         must be declared in app.manifest for the OS. WFO0003 wants those settings removed in
+         favor of ApplicationHighDpiMode alone; that would drop the embedded dpiAware block. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <AssemblyTitle>Muesli for Windows</AssemblyTitle>
     <ApplicationIcon>Assets\muesli.ico</ApplicationIcon>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
     <Product>Muesli for Windows</Product>
     <Company>Muesli contributors</Company>
     <Description>Local-first dictation and meeting transcription for Windows</Description>
