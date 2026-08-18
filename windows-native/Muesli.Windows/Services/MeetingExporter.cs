@@ -15,9 +15,17 @@ public enum MeetingExportMode
     FullMeeting
 }
 
+/// <summary>Outcome of an export so the caller can report failure instead of it vanishing.</summary>
+public sealed record MeetingExportResult(bool Completed, string? Path, string? Error)
+{
+    public static MeetingExportResult Cancelled { get; } = new(false, null, null);
+    public static MeetingExportResult Success(string path) => new(true, path, null);
+    public static MeetingExportResult Failed(string error) => new(false, null, error);
+}
+
 public static class MeetingExporter
 {
-    public static void Export(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases = null)
+    public static MeetingExportResult Export(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases = null)
     {
         var markdown = BuildMarkdown(meeting, mode, aliases);
         var suggestedName = SuggestFilename(meeting, mode);
@@ -31,32 +39,48 @@ public static class MeetingExporter
         };
 
         if (dialog.ShowDialog() != true)
-            return;
+            return MeetingExportResult.Cancelled;
 
         var path = dialog.FileName;
-        var ext = Path.GetExtension(path).ToLowerInvariant();
 
         try
         {
-            if (string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase))
-            {
-                GeneratePdf(markdown, path);
-            }
-            else
-            {
-                File.WriteAllText(path, markdown);
-            }
+            Write(markdown, path);
+        }
+        catch (Exception ex)
+        {
+            // Exporting is a read-only operation over the saved meeting, so a failure here can
+            // never corrupt it. Surfacing the reason is what the user actually needs.
+            return MeetingExportResult.Failed(ex.Message);
+        }
 
-            // Auto-open the exported file
+        try
+        {
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Export failed: {ex}");
+            // The file exported correctly; only the shell hand-off failed.
+            return new MeetingExportResult(true, path, $"Exported, but the file could not be opened automatically: {ex.Message}");
+        }
+
+        return MeetingExportResult.Success(path);
+    }
+
+    /// <summary>Writes the chosen save format. PDF when the picker selected .pdf, Markdown otherwise.</summary>
+    internal static void Write(string markdown, string path)
+    {
+        if (string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            GeneratePdf(markdown, path);
+        }
+        else
+        {
+            File.WriteAllText(path, markdown);
         }
     }
 
-    private static string BuildMarkdown(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases)
+    internal static string BuildMarkdown(MeetingItem meeting, MeetingExportMode mode, Dictionary<string, string>? aliases)
     {
         var summary = ApplyAliasesToNotes(meeting.Summary ?? "", aliases);
         var transcript = ApplyAliases(meeting.Transcript ?? "", aliases);
@@ -85,10 +109,12 @@ public static class MeetingExporter
                 if (!string.IsNullOrWhiteSpace(summary))
                 {
                     parts.Add(summary);
+                    AppendManualNotes(parts, meeting);
                 }
                 else
                 {
                     parts.Add("*No structured notes available. Raw transcript included below.*");
+                    AppendManualNotes(parts, meeting);
                     parts.Add("");
                     parts.Add("## Raw Transcript");
                     parts.Add("");
@@ -111,6 +137,7 @@ public static class MeetingExporter
                 {
                     parts.Add("*No structured notes available.*");
                 }
+                AppendManualNotes(parts, meeting);
                 parts.Add("");
                 parts.Add("---");
                 parts.Add("");
@@ -121,6 +148,19 @@ public static class MeetingExporter
         }
 
         return string.Join(Environment.NewLine, parts);
+    }
+
+    /// <summary>
+    /// The user's own notes go into every export that carries notes. They are kept under their own
+    /// heading rather than blended into the generated body, matching how the app displays them.
+    /// </summary>
+    private static void AppendManualNotes(List<string> parts, MeetingItem meeting)
+    {
+        if (string.IsNullOrWhiteSpace(meeting.ManualNotes)) return;
+        parts.Add("");
+        parts.Add(MeetingNotesDocument.ManualHeading);
+        parts.Add("");
+        parts.Add(meeting.ManualNotes.Trim());
     }
 
     private static string ApplyAliases(string text, Dictionary<string, string>? aliases)
@@ -161,7 +201,8 @@ public static class MeetingExporter
 
     private static void GeneratePdf(string markdown, string outputPath)
     {
-        // Configure QuestPDF license (Community/FOSS — no purchase needed)
+        // This build selects QuestPDF's Community license. The distributing legal
+        // entity must confirm that it satisfies QuestPDF's current eligibility terms.
         QuestPDF.Settings.License = LicenseType.Community;
 
         var lines = markdown.Split(new[] { '\r', '\n' }, StringSplitOptions.None);
@@ -230,7 +271,7 @@ public static class MeetingExporter
         }).GeneratePdf(outputPath);
     }
 
-    private static string SuggestFilename(MeetingItem meeting, MeetingExportMode mode)
+    internal static string SuggestFilename(MeetingItem meeting, MeetingExportMode mode)
     {
         var sanitized = SanitizeFilename(meeting.Title);
         if (string.IsNullOrWhiteSpace(sanitized))
@@ -255,5 +296,4 @@ public static class MeetingExporter
         return result.Trim('-').ToLowerInvariant();
     }
 }
-
 

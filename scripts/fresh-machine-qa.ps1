@@ -4,6 +4,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "read-release-properties.ps1")
+$release = Get-MuesliReleaseProperties -Root $repoRoot
+
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
@@ -17,13 +21,19 @@ $required = @(
     "Muesli.dll",
     "README-WINDOWS.txt",
     "RELEASE-NOTES.txt",
+    $release.MetadataFileName,
     "SHIP-CHECKLIST.txt",
-    "setup-worker-runtime.ps1",
-    "worker\transcribe_worker.py",
-    "worker\requirements.txt",
-    "worker\requirements-postprocess.txt",
-    "worker\requirements-parakeet.txt",
-    "Assets\menu_m_template@2x.png"
+    "WINDOWS-PRIVACY.md",
+    "THIRD-PARTY-NOTICES.md",
+    "licenses\MIT.txt",
+    "licenses\Apache-2.0.txt",
+    "licenses\BSD-3-Clause.txt",
+    "licenses\CC-BY-4.0.txt",
+    "licenses\OFL-1.1.txt",
+    "licenses\QuestPDF-2026.5.0.md",
+    "Assets\menu_m_template@2x.png",
+    "install-windows.ps1",
+    "uninstall-windows.ps1"
 )
 
 foreach ($item in $required) {
@@ -33,10 +43,70 @@ foreach ($item in $required) {
     }
 }
 
+$forbidden = @(
+    "setup-worker-runtime.ps1",
+    "worker",
+    ".venv",
+    "test-windows-package.ps1",
+    "fresh-machine-qa.ps1",
+    "benchmark-native-transcription.ps1",
+    "benchmark-native-meeting.ps1",
+    "test-media-imports.ps1",
+    "qualify-windows-release.ps1",
+    "summarize-dictation-latency.ps1",
+    "test-transcription-corpus.ps1",
+    "qualify-dictation-target.ps1",
+    "install-parakeet-cuda-runtime.ps1",
+    "native-sherpa-cuda"
+)
+foreach ($item in $forbidden) {
+    $path = Join-Path $InstallDir $item
+    if (Test-Path $path) {
+        throw "Forbidden internal or legacy artifact found: $item"
+    }
+}
+
+$pythonArtifacts = Get-ChildItem -LiteralPath $InstallDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.Extension -in @(".py", ".pyc", ".pyo", ".pyd") -or
+        $_.Name -like "requirements*.txt" -or
+        $_.Name -like "python*.dll" -or
+        $_.Name -eq "base_library.zip"
+    }
+if ($pythonArtifacts) {
+    throw "Forbidden Python file found: $($pythonArtifacts[0].FullName)"
+}
+
+$removedAsrArtifacts = Get-ChildItem -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.Name -match "(?i)whisper|ctranslate2|faster-whisper"
+    }
+if ($removedAsrArtifacts) {
+    throw "Removed transcription backend artifact found: $($removedAsrArtifacts[0].FullName)"
+}
+
+function Assert-NativeRuntimeFile {
+    param(
+        [string]$Pattern,
+        [string]$Description
+    )
+
+    $match = Get-ChildItem -LiteralPath $InstallDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like $Pattern } |
+        Select-Object -First 1
+    if (-not $match) {
+        throw "Missing native runtime dependency: $Description ($Pattern)"
+    }
+}
+
+Assert-NativeRuntimeFile -Pattern "sherpa-onnx.dll" -Description "sherpa-onnx managed runtime"
+Assert-NativeRuntimeFile -Pattern "sherpa-onnx-c-api.dll" -Description "sherpa-onnx native runtime"
+Assert-NativeRuntimeFile -Pattern "onnxruntime.dll" -Description "ONNX Runtime native runtime"
+Assert-NativeRuntimeFile -Pattern "LLamaSharp.dll" -Description "LLamaSharp managed cleanup runtime"
+Assert-NativeRuntimeFile -Pattern "llama.dll" -Description "llama.cpp native cleanup runtime"
+
 $forbiddenPatterns = @("Outlook.Application", "Microsoft.Office.Interop.Outlook", "MAPI")
 $sourceFiles = @(
-    "worker\transcribe_worker.py",
-    "setup-worker-runtime.ps1",
     "install-windows.ps1",
     "uninstall-windows.ps1"
 ) |
@@ -49,9 +119,6 @@ foreach ($pattern in $forbiddenPatterns) {
     }
 }
 
-$setup = Join-Path $InstallDir "setup-worker-runtime.ps1"
-& powershell -NoProfile -ExecutionPolicy Bypass -File $setup -CheckOnly
-
 $appData = Join-Path $env:APPDATA "muesli"
 $settings = Join-Path $appData "windows-settings.json"
 $dataDir = Join-Path $appData "data"
@@ -61,4 +128,4 @@ Write-Host "Fresh-machine QA passed for $InstallDir"
 Write-Host "Settings path: $settings"
 Write-Host "Data path: $dataDir"
 Write-Host "Logs path: $logsDir"
-Write-Host "Manual checks still required: onboarding once, shortcut capture, dictation paste, meeting detection, Qwen/Parakeet optional runtime tests."
+Write-Host "Manual checks still required: onboarding once, explicit model preparation with no auto-activation, role routing, shortcut capture, dictation paste, and meeting detection."

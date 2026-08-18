@@ -3,6 +3,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:services="clr-namespace:Muesli.Windows.Services">
   <Application.Resources>
+    <Style x:Key="MuesliFocusVisual">
+      <Setter Property="Control.Template"><Setter.Value><ControlTemplate><Border BorderBrush="{DynamicResource AccentBlueBrush}" BorderThickness="2" CornerRadius="5" Margin="-2" SnapsToDevicePixels="True" /></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="Button"><Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" /><Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45" /></Trigger><Trigger Property="IsPressed" Value="True"><Setter Property="Opacity" Value="0.78" /></Trigger></Style.Triggers></Style>
+    <Style TargetType="TextBox"><Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" /></Style>
+    <Style TargetType="ComboBox"><Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" /></Style>
+    <Style TargetType="CheckBox"><Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" /></Style>
+    <Style TargetType="TabItem"><Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" /></Style>
+    <Style TargetType="ListBoxItem"><Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" /></Style>
     <Color x:Key="BackgroundDeep">#111214</Color>
     <Color x:Key="BackgroundBase">#161719</Color>
     <Color x:Key="BackgroundRaised">#1C1D20</Color>
@@ -48,6 +57,7 @@
     </Style>
 
     <Style x:Key="ThemeSegmentButton" TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Width" Value="28" />
       <Setter Property="Height" Value="22" />
       <Setter Property="Padding" Value="0" />
@@ -82,6 +92,7 @@
     </Style>
 
     <Style x:Key="MuesliTextBox" TargetType="TextBox">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="MinHeight" Value="32" />
       <Setter Property="Padding" Value="10,6" />
       <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -93,6 +104,7 @@
     </Style>
 
     <Style x:Key="MuesliCheckBox" TargetType="CheckBox">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
       <Setter Property="FontSize" Value="14" />
       <Setter Property="Cursor" Value="Hand" />
@@ -143,7 +155,7 @@
           <ControlTemplate TargetType="TabControl">
             <DockPanel>
               <Border DockPanel.Dock="Top"
-                      Width="568"
+                      Width="570"
                       Height="32"
                       HorizontalAlignment="Center"
                       Margin="0,0,0,24"
@@ -161,10 +173,11 @@
     </Style>
 
     <Style x:Key="MuesliTabItem" TargetType="TabItem">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
       <Setter Property="FontSize" Value="13" />
       <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Width" Value="140" />
+      <Setter Property="Width" Value="112" />
       <Setter Property="Height" Value="28" />
       <Setter Property="Margin" Value="1" />
       <Setter Property="Template">
@@ -204,6 +217,7 @@
     </Style>
 
     <Style x:Key="SidebarButton" TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Height" Value="38" />
       <Setter Property="Margin" Value="8,2" />
       <Setter Property="Padding" Value="16,0" />
@@ -258,6 +272,7 @@
     </Style>
 
     <Style x:Key="PrimaryButton" TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Height" Value="38" />
       <Setter Property="Padding" Value="18,0" />
       <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -281,6 +296,7 @@
     </Style>
 
     <Style x:Key="SecondaryButton" TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Height" Value="32" />
       <Setter Property="Padding" Value="12,0" />
       <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -310,6 +326,7 @@
     </Style>
 
     <Style x:Key="ChromeButton" TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Width" Value="36" />
       <Setter Property="Height" Value="30" />
       <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -335,6 +352,7 @@
     </Style>
 
     <Style x:Key="MuesliComboBox" TargetType="ComboBox">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Height" Value="38" />
       <Setter Property="Padding" Value="12,0" />
       <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
@@ -508,6 +526,7 @@
     </Style>
 
     <Style x:Key="GhostButton" TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Height" Value="28" />
       <Setter Property="Padding" Value="12,0" />
       <Setter Property="Foreground" Value="{DynamicResource AccentBlueBrush}" />
@@ -564,6 +583,7 @@
     </Style>
 
     <Style x:Key="MuesliListBoxItem" TargetType="ListBoxItem">
+      <Setter Property="FocusVisualStyle" Value="{StaticResource MuesliFocusVisual}" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="Margin" Value="0" />
       <Setter Property="HorizontalContentAlignment" Value="Stretch" />

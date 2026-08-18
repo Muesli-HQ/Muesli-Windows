@@ -1,12 +1,19 @@
+using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Velopack;
 
 namespace Muesli.Windows;
 
 public partial class App : System.Windows.Application
 {
-    private readonly Services.AppLogService _logService = new();
+    // Preview startup must not construct the log service: its constructor resolves the user log path.
+    private Services.AppLogService? _logService;
+    private Services.AppLogService LogService => _logService ??= new Services.AppLogService();
     private IDisposable? _sentryDisposable;
+    private Services.SingleInstanceCoordinator? _singleInstance;
+    private bool _activationPending;
 
     [STAThread]
     public static void Main(string[] args)
@@ -46,10 +53,61 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        // Preview is deliberately parsed before logging, single-instance, registry repair, or MainWindow composition.
+        if (Services.Phase12PreviewMode.TryParse(e.Args, out var preview))
+        {
+            base.OnStartup(e);
+            ShutdownMode = System.Windows.ShutdownMode.OnMainWindowClose;
+            var previewWindow = preview.CreateWindow();
+            MainWindow = previewWindow;
+            previewWindow.Show();
+            return;
+        }
         base.OnStartup(e);
-        _logService.Info($"Muesli starting. Background={StartedInBackground}. Version={Environment.Version}.");
-        var pythonPath = Services.WorkerRuntimeLocator.FindPythonExecutable();
-        _logService.Info($"Worker python resolved via '{Services.WorkerRuntimeLocator.LastResolutionSource}': {pythonPath}");
+        var appVersion = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+        LogService.Info(
+            $"Muesli starting. Background={StartedInBackground}. AppVersion={appVersion}. RuntimeVersion={Environment.Version}.");
+        var commandLineArgs = Environment.GetCommandLineArgs();
+        if (commandLineArgs.Any(arg =>
+                arg.Equals("--prepare-model", StringComparison.OrdinalIgnoreCase) ||
+                arg.Equals("--verify-model", StringComparison.OrdinalIgnoreCase)))
+        {
+            _ = RunModelPreparationAsync(commandLineArgs);
+            return;
+        }
+
+        if (commandLineArgs.Any(arg =>
+                arg.Equals("--diagnose-native", StringComparison.OrdinalIgnoreCase)))
+        {
+            _ = RunNativeRuntimeQualificationAsync(commandLineArgs);
+            return;
+        }
+
+        if (commandLineArgs.Any(arg =>
+                arg.Equals("--benchmark-meeting", StringComparison.OrdinalIgnoreCase)))
+        {
+            _ = RunMeetingQualificationAsync(commandLineArgs);
+            return;
+        }
+
+        if (commandLineArgs.Any(arg =>
+                arg.Equals("--benchmark-native", StringComparison.OrdinalIgnoreCase)))
+        {
+            _ = RunNativeBenchmarkAsync(commandLineArgs);
+            return;
+        }
+
+        _singleInstance = Services.SingleInstanceCoordinator.AcquireForCurrentUser();
+        if (!_singleInstance.IsPrimary)
+        {
+            var signaled = _singleInstance.SignalActivationAsync().GetAwaiter().GetResult();
+            LogService.Info(signaled
+                ? "Existing Muesli instance was asked to show its dashboard; this process is exiting."
+                : "Another Muesli UI instance owns the per-user mutex, but activation IPC was unavailable; this process is exiting safely.");
+            Shutdown(0);
+            return;
+        }
+        _singleInstance.StartListening(() => Dispatcher.BeginInvoke(ActivatePrimaryDashboard));
 
         if (Services.StartupRegistrationService.IsEnabled() &&
             !Services.StartupRegistrationService.IsRegisteredForBackgroundLaunch())
@@ -57,11 +115,11 @@ public partial class App : System.Windows.Application
             try
             {
                 Services.StartupRegistrationService.SetEnabled(true);
-                _logService.Info("Repaired startup registration to use --background.");
+                LogService.Info("Repaired startup registration to use --background.");
             }
             catch (Exception exception)
             {
-                _logService.Error("Could not repair startup registration.", exception);
+                LogService.Error("Could not repair startup registration.", exception);
             }
         }
 
@@ -69,7 +127,7 @@ public partial class App : System.Windows.Application
 
         DispatcherUnhandledException += (_, args) =>
         {
-            _logService.Error("Unhandled UI exception.", args.Exception);
+            LogService.Error("Unhandled UI exception.", args.Exception);
             Sentry.SentrySdk.CaptureException(args.Exception);
             args.Handled = true;
             System.Windows.MessageBox.Show(
@@ -83,19 +141,19 @@ public partial class App : System.Windows.Application
         {
             if (args.ExceptionObject is Exception exception)
             {
-                _logService.Error("Unhandled app-domain exception.", exception);
+                LogService.Error("Unhandled app-domain exception.", exception);
                 Sentry.SentrySdk.CaptureException(exception);
             }
             else
             {
-                _logService.Error($"Unhandled app-domain exception object: {args.ExceptionObject}");
+                LogService.Error($"Unhandled app-domain exception object: {args.ExceptionObject}");
             }
             Sentry.SentrySdk.Flush(TimeSpan.FromSeconds(2));
         };
 
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
-            _logService.Error("Unobserved task exception.", args.Exception);
+            LogService.Error("Unobserved task exception.", args.Exception);
             Sentry.SentrySdk.CaptureException(args.Exception);
             args.SetObserved();
         };
@@ -107,6 +165,10 @@ public partial class App : System.Windows.Application
 
         var window = new MainWindow();
         MainWindow = window;
+        if (_activationPending)
+        {
+            Dispatcher.BeginInvoke(ActivatePrimaryDashboard);
+        }
 
         if (!window.OpenDashboardOnLaunch)
         {
@@ -132,7 +194,7 @@ public partial class App : System.Windows.Application
             var dsn = ResolveSentryDsn();
             if (string.IsNullOrWhiteSpace(dsn))
             {
-                _logService.Info("Crash reporting enabled but no Sentry DSN resolved; skipping Sentry init.");
+                LogService.Info("Crash reporting enabled but no Sentry DSN resolved; skipping Sentry init.");
                 return;
             }
 
@@ -153,11 +215,11 @@ public partial class App : System.Windows.Application
                 options.SetBeforeSend(Services.SentryScrubber.Scrub);
                 options.SetBeforeBreadcrumb(Services.SentryScrubber.ScrubBreadcrumb);
             });
-            _logService.Info("Sentry crash reporting initialized.");
+            LogService.Info("Sentry crash reporting initialized.");
         }
         catch (Exception exception)
         {
-            _logService.Error("Sentry initialization failed.", exception);
+            LogService.Error("Sentry initialization failed.", exception);
         }
     }
 
@@ -174,5 +236,341 @@ public partial class App : System.Windows.Application
             .FirstOrDefault(a => string.Equals(a.Key, "SentryDsn", StringComparison.Ordinal))
             ?.Value;
         return string.IsNullOrWhiteSpace(embedded) ? null : embedded;
+    }
+
+    protected override void OnExit(System.Windows.ExitEventArgs e)
+    {
+        _singleInstance?.Dispose();
+        _singleInstance = null;
+        base.OnExit(e);
+    }
+
+    private void ActivatePrimaryDashboard()
+    {
+        if (this.MainWindow is not Muesli.Windows.MainWindow window)
+        {
+            _activationPending = true;
+            return;
+        }
+
+        _activationPending = false;
+        window.ShowDashboardFromBackground();
+    }
+
+    private async Task RunMeetingQualificationAsync(string[] args)
+    {
+        string? outputPath = null;
+        try
+        {
+            var micAudioPath = Option(args, "--mic-audio");
+            var systemAudioPath = Option(args, "--system-audio");
+            if (string.IsNullOrWhiteSpace(micAudioPath) && string.IsNullOrWhiteSpace(systemAudioPath))
+            {
+                throw new ArgumentException(
+                    "Meeting qualification requires --mic-audio <path>, --system-audio <path>, or both.");
+            }
+
+            outputPath = Option(args, "--output") ??
+                         Path.Combine(
+                             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                             "muesli",
+                             "benchmarks",
+                             $"meeting-qualification-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json");
+            var runs = int.TryParse(Option(args, "--runs"), out var configuredRuns)
+                ? Math.Clamp(configuredRuns, 1, 20)
+                : 3;
+            var modelId = Option(args, "--model") ?? Services.TranscriptionModelCatalog.DefaultModelId;
+            var service = new Services.MeetingQualificationService();
+            var report = await service.RunAsync(
+                micAudioPath,
+                systemAudioPath,
+                runs,
+                modelId);
+            var payload = new
+            {
+                SchemaVersion = 1,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                Report = report
+            };
+
+            outputPath = Path.GetFullPath(outputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            await File.WriteAllTextAsync(
+                outputPath,
+                JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+            LogService.Info($"Meeting qualification report written. path={outputPath}; {report.Summary}");
+            Shutdown(0);
+        }
+        catch (Exception exception)
+        {
+            LogService.Error("Meeting qualification failed.", exception);
+            if (!string.IsNullOrWhiteSpace(outputPath))
+            {
+                try
+                {
+                    var fullOutputPath = Path.GetFullPath(outputPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+                    await File.WriteAllTextAsync(
+                        fullOutputPath,
+                        JsonSerializer.Serialize(new
+                        {
+                            SchemaVersion = 1,
+                            CreatedAtUtc = DateTimeOffset.UtcNow,
+                            Error = exception.ToString()
+                        }, new JsonSerializerOptions { WriteIndented = true }));
+                }
+                catch
+                {
+                    // The app log retains the qualification failure.
+                }
+            }
+
+            Shutdown(1);
+        }
+    }
+
+    private async Task RunModelPreparationAsync(string[] args)
+    {
+        string? outputPath = null;
+        try
+        {
+            var modelId = RequiredOption(args, "--model");
+            var verifyOnly = args.Any(arg => arg.Equals("--verify-model", StringComparison.OrdinalIgnoreCase));
+            outputPath = Option(args, "--output");
+            using var lifecycle = new Services.TranscriptionModelLifecycleService();
+            var progress = new Progress<Services.ModelDownloadProgress>(value =>
+                LogService.Info($"Model preparation progress. model={modelId}; {value.DisplayText}"));
+            if (verifyOnly)
+            {
+                await lifecycle.VerifyAsync(modelId, progress);
+            }
+            else
+            {
+                await lifecycle.PrepareAsync(modelId, progress);
+            }
+            var snapshot = lifecycle.Snapshot(modelId);
+            var payload = new
+            {
+                SchemaVersion = 1,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                Model = modelId,
+                snapshot.Status,
+                snapshot.StatusText,
+                snapshot.DiskSizeBytes,
+                ExplicitNetworkBackedAction = !verifyOnly,
+                VerifyOnly = verifyOnly,
+                DownloadActivatedRecognizer = false
+            };
+            if (!string.IsNullOrWhiteSpace(outputPath))
+            {
+                outputPath = Path.GetFullPath(outputPath);
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                await File.WriteAllTextAsync(
+                    outputPath,
+                    JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            LogService.Info($"Explicit model {(verifyOnly ? "verification" : "preparation")} completed. model={modelId}; status={snapshot.Status}; recognizerActivated=false");
+            Shutdown(snapshot.Status is Services.TranscriptionModelStatus.Ready or Services.TranscriptionModelStatus.Selected ? 0 : 2);
+        }
+        catch (Exception exception)
+        {
+            LogService.Error("Explicit model preparation failed.", exception);
+            if (!string.IsNullOrWhiteSpace(outputPath))
+            {
+                try
+                {
+                    var fullOutputPath = Path.GetFullPath(outputPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+                    await File.WriteAllTextAsync(
+                        fullOutputPath,
+                        JsonSerializer.Serialize(new
+                        {
+                            SchemaVersion = 1,
+                            CreatedAtUtc = DateTimeOffset.UtcNow,
+                            Error = exception.ToString()
+                        }, new JsonSerializerOptions { WriteIndented = true }));
+                }
+                catch
+                {
+                    // The app log retains the preparation failure.
+                }
+            }
+            Shutdown(1);
+        }
+    }
+
+    private async Task RunNativeRuntimeQualificationAsync(string[] args)
+    {
+        string? outputPath = null;
+        try
+        {
+            outputPath = Option(args, "--output") ??
+                         Path.Combine(
+                             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                             "muesli",
+                             "diagnostics",
+                             $"native-runtime-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json");
+            var audioPath = Option(args, "--audio");
+            var runs = int.TryParse(Option(args, "--runs"), out var configuredRuns)
+                ? Math.Clamp(configuredRuns, 2, 50)
+                : 10;
+            var service = new Services.NativeRuntimeQualificationService();
+            var report = await service.RunAsync(
+                audioPath,
+                runs,
+                Option(args, "--model") ?? Services.TranscriptionModelCatalog.DefaultModelId);
+            var payload = new
+            {
+                SchemaVersion = 1,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                Report = report
+            };
+
+            outputPath = Path.GetFullPath(outputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            await File.WriteAllTextAsync(
+                outputPath,
+                JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+            LogService.Info(
+                $"Native runtime qualification written. path={outputPath}; passed={report.Passed}; runtime={report.SelectedRuntime}; stressRuns={report.Stress?.Runs ?? 0}");
+            Shutdown(report.Passed ? 0 : 2);
+        }
+        catch (Exception exception)
+        {
+            LogService.Error("Native runtime qualification failed.", exception);
+            if (!string.IsNullOrWhiteSpace(outputPath))
+            {
+                try
+                {
+                    var fullOutputPath = Path.GetFullPath(outputPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+                    await File.WriteAllTextAsync(
+                        fullOutputPath,
+                        JsonSerializer.Serialize(new
+                        {
+                            SchemaVersion = 1,
+                            CreatedAtUtc = DateTimeOffset.UtcNow,
+                            Error = exception.ToString()
+                        }, new JsonSerializerOptions { WriteIndented = true }));
+                }
+                catch
+                {
+                    // The app log retains the qualification failure.
+                }
+            }
+
+            Shutdown(1);
+        }
+    }
+
+    private async Task RunNativeBenchmarkAsync(string[] args)
+    {
+        string? outputPath = null;
+        try
+        {
+            var audioPath = RequiredOption(args, "--audio");
+            outputPath = Option(args, "--output") ??
+                         Path.Combine(
+                             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                             "muesli",
+                             "benchmarks",
+                             $"native-transcription-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json");
+            var referencePath = Option(args, "--reference");
+            var referenceText = string.IsNullOrWhiteSpace(referencePath)
+                ? null
+                : await File.ReadAllTextAsync(Path.GetFullPath(referencePath));
+            var runs = int.TryParse(Option(args, "--runs"), out var configuredRuns)
+                ? Math.Clamp(configuredRuns, 1, 20)
+                : 3;
+            var modelId = Option(args, "--model") ?? Services.TranscriptionModelCatalog.DefaultModelId;
+
+            var service = new Services.TranscriptionBenchmarkService(LogService);
+            var report = await service.RunFileAsync(
+                audioPath,
+                runs,
+                referenceText,
+                modelId);
+            var fullAudioPath = Path.GetFullPath(audioPath);
+            var payload = new
+            {
+                SchemaVersion = 1,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                AudioPath = fullAudioPath,
+                AudioSha256 = Convert.ToHexString(
+                    SHA256.HashData(await File.ReadAllBytesAsync(fullAudioPath))).ToLowerInvariant(),
+                ReferencePath = string.IsNullOrWhiteSpace(referencePath)
+                    ? null
+                    : Path.GetFullPath(referencePath),
+                Engine = report.Results.FirstOrDefault()?.EngineId,
+                Model = report.Results.FirstOrDefault()?.ModelName ?? modelId,
+                Runs = runs,
+                SherpaOnnxRuntime = new
+                {
+                    Services.NativeSherpaRuntime.IsAvailable,
+                    Services.NativeSherpaRuntime.IsCudaCapable,
+                    Services.NativeSherpaRuntime.SelectedRuntime,
+                    RuntimeDirectory = Services.NativeSherpaRuntime.CudaRuntimeDirectory,
+                    Services.NativeSherpaRuntime.GpuDependencyCacheDirectory,
+                    Services.NativeSherpaRuntime.Diagnostic
+                },
+                Report = report
+            };
+
+            outputPath = Path.GetFullPath(outputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            await File.WriteAllTextAsync(
+                outputPath,
+                JsonSerializer.Serialize(payload, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                }));
+            LogService.Info($"Native transcription benchmark report written. path={outputPath}");
+            Shutdown(report.Results.Any(result => result.Success) ? 0 : 2);
+        }
+        catch (Exception exception)
+        {
+            LogService.Error("Native transcription benchmark failed.", exception);
+            if (!string.IsNullOrWhiteSpace(outputPath))
+            {
+                try
+                {
+                    var fullOutputPath = Path.GetFullPath(outputPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+                    await File.WriteAllTextAsync(
+                        fullOutputPath,
+                        JsonSerializer.Serialize(new
+                        {
+                            SchemaVersion = 1,
+                            CreatedAtUtc = DateTimeOffset.UtcNow,
+                            Error = exception.ToString()
+                        }, new JsonSerializerOptions { WriteIndented = true }));
+                }
+                catch
+                {
+                    // The app log retains the benchmark failure if the report path is unwritable.
+                }
+            }
+
+            Shutdown(1);
+        }
+    }
+
+    private static string RequiredOption(IReadOnlyList<string> args, string name)
+    {
+        return Option(args, name) ??
+               throw new ArgumentException($"Native benchmark requires {name} <value>.");
+    }
+
+    private static string? Option(IReadOnlyList<string> args, string name)
+    {
+        for (var index = 0; index < args.Count - 1; index++)
+        {
+            if (args[index].Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return args[index + 1];
+            }
+        }
+
+        return null;
     }
 }

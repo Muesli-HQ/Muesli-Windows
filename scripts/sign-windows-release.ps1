@@ -2,19 +2,21 @@ param(
     [string]$PublishDir = "",
     [string]$InstallerPath = "",
     [string]$CertificateThumbprint = "",
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "https://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "read-release-properties.ps1")
+$release = Get-MuesliReleaseProperties -Root $root
 if ([string]::IsNullOrWhiteSpace($PublishDir)) {
     $PublishDir = Join-Path $root "publish\muesli-windows-win-x64"
 }
 
 $exe = Join-Path $PublishDir "Muesli.exe"
 if (-not (Test-Path $exe)) {
-    throw "Muesli.exe not found at $exe. Run package-windows-v1.ps1 first."
+    throw "Muesli.exe not found at $exe. Run the package script first."
 }
 
 $signtoolPath = $null
@@ -36,7 +38,7 @@ if ([string]::IsNullOrWhiteSpace($signtoolPath)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
-    $candidateInstaller = Join-Path $root "artifacts\MuesliSetup-0.2.0-win-x64.exe"
+    $candidateInstaller = Join-Path $root "artifacts\MuesliSetup-$($release.Version)-win-x64.exe"
     if (Test-Path $candidateInstaller) {
         $InstallerPath = $candidateInstaller
     }

@@ -25,6 +25,15 @@ public static class StartupRegistrationService
                value.Contains("--background", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static string DescribeState()
+    {
+        var command = GetRegisteredCommand();
+        if (string.IsNullOrWhiteSpace(command)) return "Disabled in Windows";
+        return command.Contains("--background", StringComparison.OrdinalIgnoreCase)
+            ? "Enabled for background launch"
+            : "Enabled, but needs background-launch repair";
+    }
+
     public static void SetEnabled(bool enabled)
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true)
