@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$executable = Join-Path $repoRoot "windows-native\Muesli.Windows\bin\$Configuration\net8.0-windows\Muesli.exe"
+$executable = Join-Path $repoRoot "windows-native\Muesli.Windows\bin\$Configuration\net10.0-windows\Muesli.exe"
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "Muesli executable not found: $executable"
 }

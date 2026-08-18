@@ -1,14 +1,19 @@
 param(
     [string]$ZipPath = "",
-    [string]$WorkDir = "$env:TEMP\muesli-v1-qa",
+    [string]$WorkDir = "",
     [switch]$SkipLaunch
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "read-release-properties.ps1")
+$release = Get-MuesliReleaseProperties -Root $root
 if ([string]::IsNullOrWhiteSpace($ZipPath)) {
-    $ZipPath = Join-Path $root "artifacts\muesli-windows-0.2.0-win-x64.zip"
+    $ZipPath = Join-Path $root "artifacts\muesli-windows-$($release.Version)-win-x64.zip"
+}
+if ([string]::IsNullOrWhiteSpace($WorkDir)) {
+    $WorkDir = Join-Path $env:TEMP "muesli-$($release.Channel)-qa"
 }
 
 if (-not (Test-Path $ZipPath)) {
@@ -33,6 +38,7 @@ $required = @(
     "Muesli.dll",
     "README-WINDOWS.txt",
     "RELEASE-NOTES.txt",
+    $release.MetadataFileName,
     "SHIP-CHECKLIST.txt",
     "WINDOWS-PRIVACY.md",
     "THIRD-PARTY-NOTICES.md",
@@ -42,11 +48,9 @@ $required = @(
     "licenses\CC-BY-4.0.txt",
     "licenses\OFL-1.1.txt",
     "licenses\QuestPDF-2026.5.0.md",
-    "install-parakeet-cuda-runtime.ps1",
     "install-windows.ps1",
     "uninstall-windows.ps1",
-    "Assets\menu_m_template@2x.png",
-    "native-sherpa-cuda\native-sherpa-cuda-runtime.json"
+    "Assets\menu_m_template@2x.png"
 )
 
 foreach ($item in $required) {
@@ -68,12 +72,14 @@ $forbidden = @(
     "qualify-windows-release.ps1",
     "summarize-dictation-latency.ps1",
     "test-transcription-corpus.ps1",
-    "qualify-dictation-target.ps1"
+    "qualify-dictation-target.ps1",
+    "install-parakeet-cuda-runtime.ps1",
+    "native-sherpa-cuda"
 )
 foreach ($item in $forbidden) {
     $path = Join-Path $WorkDir $item
     if (Test-Path $path) {
-        throw "Package includes forbidden Python-era artifact: $item"
+        throw "Package includes a forbidden internal or unqualified release artifact: $item"
     }
 }
 
@@ -127,31 +133,11 @@ Assert-NativeRuntimeFile -Pattern "onnxruntime.dll" -Description "ONNX Runtime n
 Assert-NativeRuntimeFile -Pattern "LLamaSharp.dll" -Description "LLamaSharp managed cleanup runtime"
 Assert-NativeRuntimeFile -Pattern "llama.dll" -Description "llama.cpp native cleanup runtime"
 
-$sherpaCudaManifestPath = Join-Path $WorkDir "native-sherpa-cuda\native-sherpa-cuda-runtime.json"
-$sherpaCudaManifest = Get-Content -LiteralPath $sherpaCudaManifestPath -Raw | ConvertFrom-Json
-if ($sherpaCudaManifest.schemaVersion -ne 1 -or
-    $sherpaCudaManifest.runtimeKind -ne "native-sherpa-onnx-cuda" -or
-    $sherpaCudaManifest.runtimeVersion -ne "1.13.4" -or
-    $sherpaCudaManifest.cudaMajor -ne 12 -or
-    $sherpaCudaManifest.cudnnMajor -ne 9) {
-    throw "Sherpa CUDA runtime manifest is invalid: $sherpaCudaManifestPath"
-}
-$sherpaCudaMissing = @($sherpaCudaManifest.requiredRuntimeFiles | Where-Object {
-    -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $sherpaCudaManifestPath) $_))
-})
-if ($sherpaCudaMissing.Count -gt 0) {
-    throw "Package is missing Sherpa CUDA runtime files: $($sherpaCudaMissing -join ', ')"
-}
-Write-Host "Sherpa CUDA provider runtime files are complete."
-
 $installScript = Get-Content (Join-Path $WorkDir "install-windows.ps1") -Raw
 [scriptblock]::Create($installScript) | Out-Null
 
 $uninstallScript = Get-Content (Join-Path $WorkDir "uninstall-windows.ps1") -Raw
 [scriptblock]::Create($uninstallScript) | Out-Null
-
-$parakeetCudaScript = Get-Content (Join-Path $WorkDir "install-parakeet-cuda-runtime.ps1") -Raw
-[scriptblock]::Create($parakeetCudaScript) | Out-Null
 
 $nativeDiagnosticPath = Join-Path $WorkDir "package-native-runtime-diagnostic.json"
 $diagnosticStartInfo = [Diagnostics.ProcessStartInfo]::new()

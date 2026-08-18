@@ -33,7 +33,7 @@ if ([string]::IsNullOrWhiteSpace($MicAudioPath) -and [string]::IsNullOrWhiteSpac
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
     $packagedExecutable = Join-Path $PSScriptRoot "Muesli.exe"
-    $debugExecutable = Join-Path $root "windows-native\Muesli.Windows\bin\Debug\net8.0-windows\Muesli.exe"
+    $debugExecutable = Join-Path $root "windows-native\Muesli.Windows\bin\Debug\net10.0-windows\Muesli.exe"
     $ExecutablePath = if (Test-Path $packagedExecutable) { $packagedExecutable } else { $debugExecutable }
 }
 if (-not (Test-Path -LiteralPath $ExecutablePath)) {

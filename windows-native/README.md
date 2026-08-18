@@ -21,7 +21,7 @@ for active inference and disposes the previous recognizer deterministically.
 
 ## Stack
 
-- WPF / .NET 8 desktop app
+- WPF / .NET 10 desktop app
 - Native `RegisterHotKey` global shortcut handling
 - NAudio WASAPI microphone capture plus process-tree meeting loopback where Windows supports it, with an explicit render-endpoint fallback
 - Durable meeting-session state/journal recovery and in-app retained-track playback
@@ -40,7 +40,7 @@ dotnet build .\windows-native\Muesli.Windows\Muesli.Windows.csproj --no-restore
 ## Run
 
 ```powershell
-.\windows-native\Muesli.Windows\bin\Debug\net8.0-windows\Muesli.exe
+.\windows-native\Muesli.Windows\bin\Debug\net10.0-windows\Muesli.exe
 ```
 
 ## Deterministic benchmark

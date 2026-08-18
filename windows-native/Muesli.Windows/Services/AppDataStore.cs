@@ -103,7 +103,12 @@ public sealed class AppDataStore
         _json.Save(path, value, saveMode);
     }
 
-    private static PersistedMeeting MigrateMeeting(PersistedMeeting meeting)
+    /// <summary>
+    /// Upgrades a meeting read from JSON to the current schema. Internal rather than private so the
+    /// SQLite migration applies the identical legacy upgrade instead of a second copy of it that
+    /// could drift and, for example, stop recovering audio paths from a schema 0 <c>SourcePath</c>.
+    /// </summary>
+    internal static PersistedMeeting MigrateMeeting(PersistedMeeting meeting)
     {
         if (meeting.SchemaVersion > CurrentMeetingSchemaVersion)
         {

@@ -97,14 +97,13 @@ public sealed class Phase8MediaImportTests(Xunit.Abstractions.ITestOutputHelper 
     /// Gated on MUESLI_MEDIA_FIXTURE_DIR, a directory holding speech.wav plus one transcode per
     /// advertised extension. A format that cannot survive this must not stay on the supported list.
     /// </summary>
-    [Fact]
+    [QualificationFact("MUESLI_MEDIA_FIXTURE_DIR")]
     public void EveryAdvertisedFormatDecodesRealSpeechToTheSourceDuration()
     {
-        var directory = Environment.GetEnvironmentVariable("MUESLI_MEDIA_FIXTURE_DIR");
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return;
+        var directory = Environment.GetEnvironmentVariable("MUESLI_MEDIA_FIXTURE_DIR")!;
 
         var reference = Path.Combine(directory, "speech.wav");
-        if (!File.Exists(reference)) return;
+        Assert.True(File.Exists(reference), $"The media fixture directory does not contain {reference}.");
         double referenceSeconds;
         using (var readerForReference = new AudioFileReader(reference))
         {
@@ -183,13 +182,12 @@ public sealed class Phase8MediaImportTests(Xunit.Abstractions.ITestOutputHelper 
         Assert.False(storage.IsOwnedMeetingAudioPath("meet_1", escape));
     }
 
-    [Fact]
+    [QualificationFact("MUESLI_MEDIA_FIXTURE_DIR")]
     public void DecodingIsDeterministicAcrossRepeatedReads()
     {
-        var directory = Environment.GetEnvironmentVariable("MUESLI_MEDIA_FIXTURE_DIR");
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return;
+        var directory = Environment.GetEnvironmentVariable("MUESLI_MEDIA_FIXTURE_DIR")!;
         var path = Path.Combine(directory, "speech.mp3");
-        if (!File.Exists(path)) return;
+        Assert.True(File.Exists(path), $"The media fixture directory does not contain {path}.");
 
         static long Decode(string file)
         {

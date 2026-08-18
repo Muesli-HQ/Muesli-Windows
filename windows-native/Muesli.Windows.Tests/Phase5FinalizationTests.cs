@@ -456,12 +456,11 @@ public sealed class Phase5FinalizationTests(Xunit.Abstractions.ITestOutputHelper
     /// pass proves nothing about speaker separation, so this asserts distinct identities and that
     /// the returning speaker is recognised as the same person.
     /// </summary>
-    [Fact]
+    [QualificationFact("MUESLI_MULTISPEAKER_FIXTURE_SOURCE")]
     public async Task RealMultiSpeakerAudioProducesDistinctAndStableRemoteIdentities()
     {
-        var source = Environment.GetEnvironmentVariable("MUESLI_MULTISPEAKER_FIXTURE_SOURCE");
-        if (string.IsNullOrWhiteSpace(source) || !Directory.Exists(source)) return;
-        if (!NativeDiarizationClient.IsRuntimeAvailable) return;
+        var source = Environment.GetEnvironmentVariable("MUESLI_MULTISPEAKER_FIXTURE_SOURCE")!;
+        Assert.True(NativeDiarizationClient.IsRuntimeAvailable, "The native diarization runtime is unavailable on this machine.");
 
         var voices = Directory.EnumerateFiles(source, "*.wav").OrderBy(path => path).Take(3).ToList();
         Assert.True(voices.Count >= 2, "The multi-speaker fixture source needs at least two distinct voices.");

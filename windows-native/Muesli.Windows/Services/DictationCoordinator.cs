@@ -8,6 +8,7 @@ public sealed class DictationCoordinator : IDisposable
     private readonly AudioCaptureService _audioCaptureService = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private int _disposed;
+    private DictationSessionKind _sessionKind;
     private Task<TranscriptionResult>? _activeTranscriptionTask;
 
     public bool IsRecording { get; private set; }
@@ -18,10 +19,14 @@ public sealed class DictationCoordinator : IDisposable
     public string ModelDisplayName => _transcriptionClient.ModelDisplayName;
     public bool IsModelReady => _transcriptionClient.IsSelectedModelReady;
     public CaptureCleanupResult StartupCaptureCleanup => _audioCaptureService.StartupCleanupResult;
+    public SoundFeedbackService SoundFeedback { get; }
 
-    public DictationCoordinator(NativeTranscriptionClient? transcriptionClient = null)
+    public DictationCoordinator(
+        NativeTranscriptionClient? transcriptionClient = null,
+        SoundFeedbackService? soundFeedback = null)
     {
         _transcriptionClient = transcriptionClient ?? new NativeTranscriptionClient();
+        SoundFeedback = soundFeedback ?? new SoundFeedbackService();
         _audioCaptureService.DeviceListChanged += OnDeviceListChanged;
         _audioCaptureService.RouteChanged += OnRouteChanged;
         _audioCaptureService.LevelChanged += OnLevelChanged;
@@ -34,7 +39,10 @@ public sealed class DictationCoordinator : IDisposable
     public IReadOnlyList<string> ListMicrophones() => _audioCaptureService.ListCaptureDevices();
     public string PickPreferredMicrophone() => _audioCaptureService.PickPreferredDeviceName();
 
-    public async Task StartAsync(string? microphoneName)
+    public Task StartAsync(string? microphoneName) =>
+        StartAsync(microphoneName, DictationSessionKind.Interactive);
+
+    public async Task StartAsync(string? microphoneName, DictationSessionKind sessionKind)
     {
         // The global hotkey outlives this coordinator during shutdown. Without this guard every
         // keypress awaits a disposed semaphore and logs an ObjectDisposedException.
@@ -53,6 +61,8 @@ public sealed class DictationCoordinator : IDisposable
             IsBusy = true;
             await _audioCaptureService.StartAsync(microphoneName);
             IsRecording = true;
+            _sessionKind = sessionKind;
+            SoundFeedback.PlayDictationStart(sessionKind);
         }
         finally
         {
@@ -102,6 +112,7 @@ public sealed class DictationCoordinator : IDisposable
 
             IsBusy = true;
             IsRecording = false;
+            SoundFeedback.PlayDictationInsert(_sessionKind);
             var coordinatorStarted = Stopwatch.StartNew();
             var stopStarted = Stopwatch.StartNew();
             capturedAudio = await _audioCaptureService.StopAsync(keepLatestDictationAlias);
@@ -232,7 +243,16 @@ public sealed class DictationCoordinator : IDisposable
     public Task SwitchModelAsync(string modelId, CancellationToken cancellationToken = default) =>
         _transcriptionClient.SwitchModelAsync(modelId, cancellationToken);
 
-    public Task<ModelOperationResult> InitializeModelAsync() => _transcriptionClient.InitializeAsync();
+    public async Task<ModelOperationResult> InitializeModelAsync()
+    {
+        var result = await _transcriptionClient.InitializeAsync();
+        if (IsModelReady)
+        {
+            SoundFeedback.PlayModelReady();
+        }
+
+        return result;
+    }
 
     public Task ReleaseModelAsync(string modelId, CancellationToken cancellationToken = default) =>
         _transcriptionClient.ReleaseModelAsync(modelId, cancellationToken);

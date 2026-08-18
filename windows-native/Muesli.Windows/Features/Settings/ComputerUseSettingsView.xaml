@@ -1,0 +1,87 @@
+<features:FeatureViewBase x:Class="Muesli.Windows.Features.Settings.ComputerUseSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:features="clr-namespace:Muesli.Windows.Features">
+  <StackPanel>
+                  <TextBlock Text="HIGH-RISK OPTIONAL SUBSYSTEM" Style="{StaticResource SectionLabel}" />
+                  <Border Style="{StaticResource ContentCard}">
+                    <StackPanel>
+                      <CheckBox Style="{StaticResource MuesliCheckBox}"
+                                Content="Enable voice-driven Computer Use"
+                                IsChecked="{Binding ComputerUseEnabled}" />
+                      <TextBlock Margin="0,7,0,12" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap"
+                                 Text="Disabled by default. Only the Speak planner command button can enter planner mode. Ordinary dictation, dictated phrases, meeting text, and saved transcripts never activate it." />
+                      <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="Planner provider" Style="{StaticResource SettingsRowLabel}" />
+                          <TextBlock Text="Provider and model are independent from meeting summaries and must be selected explicitly. There is no fallback provider."
+                                     Margin="0,4,18,0" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                          <ComboBox Style="{StaticResource MuesliComboBox}" ItemsSource="{Binding ComputerUsePlannerProviders}" SelectedItem="{Binding SelectedComputerUsePlannerProvider}" />
+                          <TextBox Margin="0,8,0,0" Style="{StaticResource MuesliTextBox}" Text="{Binding ComputerUsePlannerModel, UpdateSourceTrigger=LostFocus}" ToolTip="Exact planner model ID" />
+                        </StackPanel>
+                      </Grid>
+                      <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
+                      <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="95"/><ColumnDefinition Width="14"/><ColumnDefinition Width="95"/><ColumnDefinition Width="14"/><ColumnDefinition Width="95"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="Execution limits" Style="{StaticResource SettingsRowLabel}" />
+                          <TextBlock Text="Planner and actions are independently bounded. Stop cancels the active voice capture, provider request, confirmation, or executor action."
+                                     Margin="0,4,18,0" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1"><TextBlock Text="Planner sec" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}"/><TextBox Style="{StaticResource MuesliTextBox}" Text="{Binding ComputerUsePlannerTimeoutSeconds, UpdateSourceTrigger=LostFocus}"/></StackPanel>
+                        <StackPanel Grid.Column="3"><TextBlock Text="Action sec" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}"/><TextBox Style="{StaticResource MuesliTextBox}" Text="{Binding ComputerUsePerActionTimeoutSeconds, UpdateSourceTrigger=LostFocus}"/></StackPanel>
+                        <StackPanel Grid.Column="5"><TextBlock Text="Max actions" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}"/><TextBox Style="{StaticResource MuesliTextBox}" Text="{Binding ComputerUseMaximumActionCount, UpdateSourceTrigger=LostFocus}"/></StackPanel>
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+
+                  <TextBlock Text="ALLOWLISTS AND OBSERVATION" Style="{StaticResource SectionLabel}" />
+                  <Border Style="{StaticResource ContentCard}">
+                    <StackPanel>
+                      <TextBlock Text="Allowed applications" Style="{StaticResource SettingsRowLabel}" />
+                      <TextBlock Text="Semicolon-separated process names, for example notepad; explorer. Only the single approved foreground window is observed; unrelated windows, clipboard history, Credential Manager, and password fields are excluded."
+                                 Margin="0,4,0,7" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                      <TextBox Style="{StaticResource MuesliTextBox}" Text="{Binding ComputerUseAllowedApplications, UpdateSourceTrigger=LostFocus}" />
+                      <Border Height="1" Background="{DynamicResource BorderBrushSoft}" Margin="0,12" />
+                      <CheckBox Style="{StaticResource MuesliCheckBox}" Content="Include UI control text (unavailable until masking qualification passes)" IsChecked="{Binding ComputerUseIncludeWindowText}" IsEnabled="False" />
+                      <CheckBox Margin="0,8,0,0" Style="{StaticResource MuesliCheckBox}" Content="Include browser page text (unavailable until masking qualification passes)" IsChecked="{Binding ComputerUseIncludeBrowserPageText}" IsEnabled="False" />
+                      <CheckBox Margin="0,8,0,0" Style="{StaticResource MuesliCheckBox}" Content="Include scoped screenshots (unavailable until masking qualification passes)" IsChecked="{Binding ComputerUseIncludeScreenshots}" IsEnabled="False" />
+                    </StackPanel>
+                  </Border>
+
+                  <TextBlock Text="SUPPORTED BROWSER INTERFACE" Style="{StaticResource SectionLabel}" />
+                  <Border Style="{StaticResource ContentCard}">
+                    <StackPanel>
+                      <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="Browser automation" Style="{StaticResource SettingsRowLabel}" />
+                          <TextBlock Text="Browser actions are available only through an explicitly registered loopback DevTools session. Address-bar UI Automation and arbitrary remote endpoints are not used."
+                                     Margin="0,4,18,0" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" Style="{StaticResource MuesliComboBox}" ItemsSource="{Binding ComputerUseBrowserInterfaces}" SelectedItem="{Binding SelectedComputerUseBrowserInterface}" />
+                      </Grid>
+                      <TextBox Margin="0,10,0,0" Style="{StaticResource MuesliTextBox}" Text="{Binding ComputerUseBrowserEndpoint, UpdateSourceTrigger=LostFocus}" ToolTip="Loopback DevTools endpoint" />
+                      <TextBlock Text="Allowed domains" Style="{StaticResource SettingsRowLabel}" Margin="0,12,0,0" />
+                      <TextBox Margin="0,7,0,0" Style="{StaticResource MuesliTextBox}" Text="{Binding ComputerUseAllowedBrowserDomains, UpdateSourceTrigger=LostFocus}" ToolTip="Exact hostnames separated by semicolons" />
+                    </StackPanel>
+                  </Border>
+
+                  <TextBlock Text="EXPLICIT VOICE SESSION" Style="{StaticResource SectionLabel}" />
+                  <Border Style="{StaticResource ContentCard}">
+                    <StackPanel>
+                      <TextBlock Text="Each session plans from a fresh approved foreground observation. Unsupported or malformed actions, stale state, elevated targets, and policy downgrades fail closed. Risky actions always require a fresh confirmation."
+                                 FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
+                      <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Style="{StaticResource PrimaryButton}" Content="{Binding ComputerUseVoiceButtonText}" Click="ForwardClick" features:FeatureAction.Name="ComputerUseVoice_Click" />
+                        <Button Margin="10,0,0,0" Style="{StaticResource SecondaryButton}" Content="Stop" IsEnabled="{Binding ComputerUseStopEnabled}" Click="ForwardClick" features:FeatureAction.Name="StopComputerUse_Click" />
+                        <Button Margin="10,0,0,0" Style="{StaticResource GhostButton}" Content="Open trace diagnostics" Click="ForwardClick" features:FeatureAction.Name="OpenComputerUseDiagnostics_Click" />
+                      </StackPanel>
+                      <TextBlock Text="{Binding ComputerUseStatusText}" Margin="0,12,0,0" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+</features:FeatureViewBase>

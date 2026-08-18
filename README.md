@@ -26,7 +26,7 @@ Muesli is built around local-only processing. Concretely:
 
 ## Install
 
-Download and extract `muesli-windows-v1-win-x64.zip`, then run `Muesli.exe`.
+Download and extract `muesli-windows-<version>-win-x64.zip`, then run `Muesli.exe`.
 
 The Python runtime has been removed. No Python, venv, or external transcription worker runtime is required. Model preparation is an explicit action in Models; selecting a role never starts a download or silently changes engines.
 
@@ -55,7 +55,7 @@ fresh-launch log evidence.
 
 ## Architecture
 
-- **UI**: WPF .NET 8, XAML, Inter font.
+- **UI**: WPF .NET 10, XAML, Inter font.
 - **Audio**: NAudio WASAPI microphone capture, Windows process-tree loopback when available for a detected meeting, and an explicitly disclosed render-endpoint loopback fallback.
 - **ASR**: role-scoped `NativeTranscriptionClient` instances with sherpa-onnx offline ONNX models. Dictation has one recognizer owner; recorded meetings and imports share the separately selected final-model owner.
 - **Cleanup**: `NativeTextCleanupService` with LLamaSharp / llama.cpp GGUF models.
@@ -71,12 +71,12 @@ fresh-launch log evidence.
 
 - Active app: `windows-native/Muesli.Windows/`
 - Build before launch: `dotnet build windows-native\Muesli.Windows\Muesli.Windows.csproj --no-restore`
-- Run debug build directly: `windows-native\Muesli.Windows\bin\Debug\net8.0-windows\Muesli.exe`
+- Run debug build directly: `windows-native\Muesli.Windows\bin\Debug\net10.0-windows\Muesli.exe`
 - Do not ship Python worker files, external transcription runtime setup files, or venv setup.
 
 ## Limitations
 
-- Supported ASR families use the packaged CPU provider and select the packaged CUDA provider when compatible NVIDIA dependencies are available; provider fallback never changes the model or ASR engine.
+- Supported ASR families use the packaged CPU provider. The Wave 0 package does not claim NVIDIA acceleration; a version-matched CUDA provider remains a Wave 5 packaging and hardware-qualification task.
 - Qwen cleanup is disabled by default until a GGUF model is placed in the native-cleanup cache.
 - Process-targeted loopback requires Windows build 20348 or newer and a live detected-process ID. When Windows blocks it, Muesli visibly falls back to render-endpoint loopback, which can include unrelated system sounds; mic recording can continue in a disclosed degraded state.
 - Preparing a missing model requires an explicit network-backed download. Transcription itself fails closed when the selected role is missing or unverified.

@@ -97,10 +97,11 @@ public sealed class Phase12ProductExperienceTests
         var root = FindRepositoryRoot();
         var app = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "App.xaml"));
         var main = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml"));
+        var dictations = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Dictations", "DictationsView.xaml"));
         var onboarding = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "OnboardingWindow.xaml"));
         Assert.Contains("MuesliFocusVisual", app);
         Assert.Contains("MinWidth=\"760\"", main);
-        Assert.Contains("Resume setup", main);
+        Assert.Contains("Resume setup", dictations);
         Assert.Contains("AutomationProperties", onboarding);
         foreach (var style in new[] { "ThemeSegmentButton", "MuesliTextBox", "MuesliCheckBox", "MuesliTabItem", "SidebarButton", "PrimaryButton", "SecondaryButton", "ChromeButton", "MuesliComboBox", "GhostButton", "MuesliListBoxItem" })
         {
@@ -116,14 +117,15 @@ public sealed class Phase12ProductExperienceTests
         var root = FindRepositoryRoot();
         var onboarding = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "OnboardingWindow.xaml.cs"));
         var main = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs"));
+        var runtime = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Dictations.cs"));
         Assert.DoesNotContain("private void ShowLegacyOnboardingForm", main);
         Assert.DoesNotContain("private Border BuildOnboardingRow", main);
         Assert.Contains("PrepareOfflineModelAsync", onboarding);
         Assert.Contains("PrepareLiveModelAsync", onboarding);
         Assert.Contains("CancellationToken", onboarding);
         Assert.Contains("CancelLiveModel", onboarding);
-        Assert.Contains("_streamingModelLifecycle.PrepareAsync", main);
-        Assert.Contains("_modelLifecycle.PrepareAsync", main);
+        Assert.Contains("_streamingModelLifecycle.PrepareAsync", runtime);
+        Assert.Contains("_modelLifecycle.PrepareAsync", runtime);
     }
 
     [Fact]
@@ -132,7 +134,11 @@ public sealed class Phase12ProductExperienceTests
         var root = FindRepositoryRoot();
         var onboarding = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "OnboardingWindow.xaml.cs"));
         var main = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml"));
-        var code = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs"));
+        var code = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs")) +
+                   Environment.NewLine +
+                   File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Dictations.cs")) +
+                   Environment.NewLine +
+                   File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Navigation.cs"));
         Assert.Contains("SummaryProviderDisclosure.DisclosureFor", onboarding);
         Assert.Contains("PreviewIndicator", onboarding);
         Assert.Contains("ResetIndicatorPosition", onboarding);
@@ -212,7 +218,10 @@ public sealed class Phase12ProductExperienceTests
         var root = FindRepositoryRoot();
         var app = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "App.xaml.cs"));
         var main = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs"));
+        var runtime = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.xaml.cs"));
+        var runtimeNavigation = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Navigation.cs"));
         var preview = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Services", "Phase12PreviewMode.cs"));
+        var shell = main + Environment.NewLine + runtime + Environment.NewLine + runtimeNavigation;
         Assert.Contains("private Services.AppLogService? _logService", app);
         Assert.Contains("if (Services.Phase12PreviewMode.TryParse(e.Args, out var preview))", app);
         Assert.DoesNotContain("private readonly Services.AppLogService _logService = new();", app);
@@ -221,14 +230,18 @@ public sealed class Phase12ProductExperienceTests
         Assert.Contains("MainWindow.CreateVisualPreview", preview);
         Assert.Contains("no store, filesystem, registry, network", preview);
         Assert.Contains("_isVisualPreview", main);
-        Assert.Contains("_isVisualPreview ? \"Preview-only: startup registration was not inspected.\"", main);
-        var previewConstructor = main[main.IndexOf("private MainWindow(Phase12PreviewMode mode)", StringComparison.Ordinal)..main.IndexOf("private void ShowPreviewPage", StringComparison.Ordinal)];
+        Assert.Contains("_isVisualPreview ? \"Preview-only: startup registration was not inspected.\"", runtime);
+        var previewConstructor = runtime[runtime.IndexOf("private FeatureRuntime(IFeatureShellContext shell, AppServices appServices, Phase12PreviewMode mode)", StringComparison.Ordinal)..runtime.IndexOf("private void ShowPreviewPage", StringComparison.Ordinal)];
         foreach (var forbiddenConstruction in new[] { "new SettingsStore", "new AppDataStore", "new OnboardingProgressStore", "new AppLogService", "new DictationCoordinator", "new NativeTranscriptionClient", "new TrayIconService", "SystemEvents.", "StartupRegistrationService", "new HttpClient", "new ComputerUseTraceStore" })
             Assert.DoesNotContain(forbiddenConstruction, previewConstructor);
-        Assert.Contains("_isVisualPreview) return;", main);
-        Assert.Contains("DisableVisualPreviewActions", main);
-        Assert.Contains("Preview-only: startup repair is disabled", main);
-        Assert.Contains("PreviewPageStateMessage", File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml")));
+        Assert.Contains("_isVisualPreview", runtime);
+        Assert.Contains("DisableVisualPreviewActions", runtime);
+        Assert.Contains("Preview-only: startup repair is disabled", shell);
+        var featureXaml = string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(Path.Combine(root, "windows-native", "Muesli.Windows", "Features"), "*.xaml", SearchOption.AllDirectories)
+                .Select(File.ReadAllText));
+        Assert.Contains("PreviewPageStateMessage", featureXaml);
         Assert.Contains("VisualVerificationBanner", File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml")));
     }
 
@@ -280,16 +293,15 @@ public sealed class Phase12ProductExperienceTests
     }
 
     [Fact]
-    public void Windows_app_manifest_declares_per_monitor_v2_with_legacy_fallback()
+    public void Windows_app_configures_per_monitor_v2_once_through_the_project_property()
     {
         var root = FindRepositoryRoot();
         var project = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Muesli.Windows.csproj"));
         var manifest = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "app.manifest"));
         Assert.Contains("<ApplicationManifest>app.manifest</ApplicationManifest>", project);
-        Assert.Contains("http://schemas.microsoft.com/SMI/2005/WindowsSettings", manifest);
-        Assert.Contains(">true/pm</dpiAware>", manifest);
-        Assert.Contains("http://schemas.microsoft.com/SMI/2016/WindowsSettings", manifest);
-        Assert.Contains(">PerMonitorV2, PerMonitor</dpiAwareness>", manifest);
+        Assert.Contains("<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>", project);
+        Assert.DoesNotContain("http://schemas.microsoft.com/SMI/2005/WindowsSettings", manifest);
+        Assert.DoesNotContain("http://schemas.microsoft.com/SMI/2016/WindowsSettings", manifest);
         Assert.DoesNotContain("SetHighDpiMode", File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "App.xaml.cs")));
     }
 
@@ -363,13 +375,16 @@ public sealed class Phase12ProductExperienceTests
     {
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml"));
-        var code = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs"));
+        var code = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs")) +
+                   Environment.NewLine +
+                   File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Navigation.cs"));
+        var settings = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Settings", "SettingsView.xaml"));
         Assert.Contains("x:Name=\"SidebarColumn\" Width=\"260\" MinWidth=\"72\"", xaml);
         Assert.DoesNotContain("<ColumnDefinition.Style>", xaml);
-        Assert.Contains("UpdateSidebarColumnWidth();", code);
-        Assert.Contains("SidebarColumn.Width = new GridLength(IsCompactLayout ? 72 : 260);", code);
+        Assert.Contains("SidebarColumn.Width = new GridLength(value ? 72 : 260);", File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs")));
         Assert.Contains("Window_SizeChanged", code);
-        Assert.Contains("<TabControl Style=\"{StaticResource MuesliTabControl}\">", xaml);
+        Assert.Contains("<TabControl x:Name=\"SettingsTabs\"", settings);
+        Assert.Contains("Style=\"{StaticResource MuesliTabControl}\"", settings);
     }
 
     [Fact]
@@ -377,14 +392,15 @@ public sealed class Phase12ProductExperienceTests
     {
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml"));
-        var code = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs"));
+        var code = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Search.cs"));
+        var search = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Search", "SearchView.xaml"));
         Assert.Contains("x:Key=\"CompactHeaderText\"", xaml);
         Assert.Contains("x:Key=\"CompactHeaderSearchSurface\"", xaml);
         Assert.Contains("x:Key=\"CompactOnlySearchButton\"", xaml);
         Assert.Contains("RelativeSource={RelativeSource AncestorType=Window}", xaml);
         Assert.Contains("OpenSearchFromCompactRail_Click", xaml);
         Assert.Contains("AutomationProperties.Name=\"Open search and focus the search field\"", xaml);
-        Assert.Contains("x:Name=\"MainSearchInput\"", xaml);
+        Assert.Contains("x:Name=\"MainSearchInput\"", search);
         Assert.Contains("AutomationProperties.Name=\"Search dictations and meetings\"", xaml);
         Assert.Contains("x:Key=\"CompactThemeSwitch\"", xaml);
         Assert.Contains("<Setter Property=\"HorizontalAlignment\" Value=\"Left\" />", xaml);
@@ -412,6 +428,11 @@ public sealed class Phase12ProductExperienceTests
         var root = FindRepositoryRoot();
         var onboarding = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "OnboardingWindow.xaml.cs"));
         var main = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "MainWindow.xaml.cs"));
+        var runtimeShell = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.xaml.cs"));
+        var workflow = main + Environment.NewLine + runtimeShell + Environment.NewLine +
+                       File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Dictations.cs")) +
+                       Environment.NewLine +
+                       File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Features", "Runtime", "FeatureRuntime.Navigation.cs"));
         var prompt = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Services", "MeetingPromptService.cs"));
         var tray = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Services", "TrayIconService.cs"));
         Assert.Contains("Func<CancellationToken, Task<string>>", onboarding);
@@ -420,22 +441,22 @@ public sealed class Phase12ProductExperienceTests
         Assert.Contains("_context.OllamaEndpoint", onboarding);
         Assert.Contains("Configure summary provider in Settings", onboarding);
         Assert.Contains("OpenSummaryProviderSettings", onboarding);
-        Assert.Contains("Task.Delay(TimeSpan.FromSeconds(3), cancellationToken)", main);
-        Assert.Contains("StopForOnboardingTestAsync(cancellationToken)", main);
+        Assert.Contains("Task.Delay(TimeSpan.FromSeconds(3), cancellationToken)", workflow);
+        Assert.Contains("StopForOnboardingTestAsync(cancellationToken)", workflow);
         Assert.DoesNotContain("LogTranscriptionResult(\"onboarding dictation test\"", main);
         var coordinator = File.ReadAllText(Path.Combine(root, "windows-native", "Muesli.Windows", "Services", "DictationCoordinator.cs"));
         Assert.Contains("StopForOnboardingTestAsync", coordinator);
         Assert.Contains("keepLatestDictationAlias: false", coordinator);
-        Assert.Contains("StartupRegistrationService.IsEnabled()", main);
-        Assert.Contains("Window_Activated", main);
+        Assert.Contains("StartupRegistrationService.IsEnabled()", workflow);
+        Assert.Contains("Window_Activated", workflow);
         Assert.Contains("SystemParameters.ClientAreaAnimation", prompt);
         Assert.Contains("WindowPlacementService.GetWorkAreaForCursor", prompt);
         Assert.Contains("_window.Opacity = 0", prompt);
         Assert.Contains("Show();", prompt);
-        Assert.Contains("Show first so placement has a real HWND", main);
+        Assert.Contains("Show first so placement has a real HWND", workflow);
         Assert.Contains("previous?.Dispose()", tray);
         Assert.Contains("snapshotFailure", tray);
-        Assert.Contains("explicitResume", main);
-        Assert.Contains("savedProgress.Deferred && !explicitResume", main);
+        Assert.Contains("explicitResume", workflow);
+        Assert.Contains("savedProgress.Deferred && !explicitResume", workflow);
     }
 }
