@@ -1,7 +1,5 @@
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\Muesli",
-    [switch]$WithPostProcessing,
-    [switch]$WithParakeet,
     [switch]$StartAtLogin,
     [switch]$NoDesktopShortcut
 )
@@ -23,19 +21,6 @@ Get-ChildItem -LiteralPath $source -Force |
               $installResolved.StartsWith($child + "\", [StringComparison]::OrdinalIgnoreCase))
     } |
     Copy-Item -Destination $InstallDir -Recurse -Force
-
-$setup = Join-Path $InstallDir "setup-worker-runtime.ps1"
-if (Test-Path $setup) {
-    if ($WithPostProcessing -and $WithParakeet) {
-        & powershell -ExecutionPolicy Bypass -File $setup -WithPostProcessing -WithParakeet
-    } elseif ($WithPostProcessing) {
-        & powershell -ExecutionPolicy Bypass -File $setup -WithPostProcessing
-    } elseif ($WithParakeet) {
-        & powershell -ExecutionPolicy Bypass -File $setup -WithParakeet
-    } else {
-        & powershell -ExecutionPolicy Bypass -File $setup
-    }
-}
 
 $exe = Join-Path $InstallDir "Muesli.exe"
 $shell = New-Object -ComObject WScript.Shell
