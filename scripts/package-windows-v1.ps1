@@ -1,13 +1,18 @@
 param(
     [string]$Configuration = "Release",
-    [string]$Runtime = "win-x64"
+    [string]$Runtime = "win-x64",
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 . (Join-Path $PSScriptRoot "read-release-properties.ps1")
+. (Join-Path $PSScriptRoot "release-common.ps1")
 $release = Get-MuesliReleaseProperties -Root $root
+Copy-MuesliGitignoredModelsIfMissing -Root $root | Out-Null
+Assert-MuesliPinnedSdk -Root $root | Out-Null
+Assert-MuesliCleanReleaseInputs -Root $root -AllowDirty:$AllowDirty | Out-Null
 $project = Join-Path $root "windows-native\Muesli.Windows\Muesli.Windows.csproj"
 $publishRoot = Join-Path $root "publish"
 $publishDir = Join-Path $publishRoot "muesli-windows-$Runtime"
@@ -39,12 +44,11 @@ if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 
+$publishArgs = Get-MuesliDeterministicPublishArguments
 dotnet publish $project `
     -c $Configuration `
     -r $Runtime `
-    --self-contained true `
-    -p:PublishSingleFile=false `
-    -p:PublishReadyToRun=true `
+    @publishArgs `
     -o $publishDir
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE. No release package was produced."
@@ -112,7 +116,7 @@ Notes:
   - Logs are stored in `%APPDATA%\muesli\logs`; use About > Open Logs when reporting issues.
 "@
 
-Set-Content -LiteralPath (Join-Path $publishDir "README-WINDOWS.txt") -Value $readme -Encoding UTF8
+Write-Utf8NoBomFile -Path (Join-Path $publishDir "README-WINDOWS.txt") -Content $readme
 $releaseNotes = @"
 Muesli Windows v$($release.Version) Release Notes
 ===================================
@@ -160,7 +164,7 @@ Automated gates completed during package creation do not replace the human check
 Signing, target-application paste confirmation, transcription-quality review, and a true
 fresh-machine installer run require separate release evidence.
 "@
-Set-Content -LiteralPath (Join-Path $publishDir "RELEASE-NOTES.txt") -Value $releaseNotes -Encoding UTF8
+Write-Utf8NoBomFile -Path (Join-Path $publishDir "RELEASE-NOTES.txt") -Content $releaseNotes
 
 $releaseMetadata = [ordered]@{
     schemaVersion = 1
@@ -194,7 +198,7 @@ $releaseMetadata = [ordered]@{
         cudaQualificationModule = "Wave 5"
     }
 }
-$releaseMetadata | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $publishDir $release.MetadataFileName) -Encoding UTF8
+Write-Utf8NoBomFile -Path (Join-Path $publishDir $release.MetadataFileName) -Content (($releaseMetadata | ConvertTo-Json -Depth 10) + "`n")
 
 $shipChecklist = @"
 Muesli Windows Human Ship Checklist
@@ -251,7 +255,7 @@ Release:
   [ ] Release notes reviewed.
   [ ] Known limitations documented.
 "@
-Set-Content -LiteralPath (Join-Path $publishDir "SHIP-CHECKLIST.txt") -Value $shipChecklist -Encoding UTF8
+Write-Utf8NoBomFile -Path (Join-Path $publishDir "SHIP-CHECKLIST.txt") -Content $shipChecklist
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Destination (Join-Path $publishDir "install-windows.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination (Join-Path $publishDir "uninstall-windows.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination (Join-Path $publishDir "THIRD-PARTY-NOTICES.md") -Force
@@ -263,9 +267,12 @@ $inventoryPath = Join-Path $artifactsDir "native-runtime-inventory.json"
 if ($LASTEXITCODE -ne 0) {
     throw "Native-runtime inventory generation failed."
 }
-Copy-Item -LiteralPath $inventoryPath -Destination (Join-Path $publishDir "native-runtime-inventory.json") -Force
-Set-Content -LiteralPath $lastPublishFile -Value $publishDir -Encoding UTF8
+Write-StablePackagedNativeInventory -SourcePath $inventoryPath -DestinationPath (Join-Path $publishDir "native-runtime-inventory.json")
+Write-Utf8NoBomFile -Path $lastPublishFile -Content ($publishDir.Trim() + "`n")
 
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath
+
+$contentInventoryPath = Join-Path $artifactsDir "package-content-inventory.json"
+& (Join-Path $PSScriptRoot "write-package-content-inventory.ps1") -ZipPath $zipPath -OutputPath $contentInventoryPath
 
 Write-Host "Created $zipPath"

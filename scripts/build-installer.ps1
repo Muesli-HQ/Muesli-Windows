@@ -1,17 +1,22 @@
 param(
-    [string]$InnoSetupCompiler = ""
+    [string]$InnoSetupCompiler = "",
+    [switch]$SkipPackage,
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 . (Join-Path $PSScriptRoot "read-release-properties.ps1")
+. (Join-Path $PSScriptRoot "release-common.ps1")
 $release = Get-MuesliReleaseProperties -Root $root
 $packageScript = Join-Path $root "scripts\package-windows-v1.ps1"
 $installerScript = Join-Path $root "installers\muesli-windows.iss"
 $lastPublishFile = Join-Path $root "artifacts\last-publish-dir.txt"
 
-& $packageScript
+if (-not $SkipPackage) {
+    & $packageScript -AllowDirty:$AllowDirty
+}
 
 if ([string]::IsNullOrWhiteSpace($InnoSetupCompiler)) {
     $command = Get-Command iscc -ErrorAction SilentlyContinue
@@ -25,6 +30,10 @@ if ([string]::IsNullOrWhiteSpace($InnoSetupCompiler)) {
         )
         $InnoSetupCompiler = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
     }
+}
+
+if ($SkipPackage -and -not (Test-Path -LiteralPath $lastPublishFile)) {
+    throw "SkipPackage was set but artifacts/last-publish-dir.txt is missing. Run package-windows-v1.ps1 first."
 }
 
 if ([string]::IsNullOrWhiteSpace($InnoSetupCompiler) -or -not (Test-Path $InnoSetupCompiler)) {
