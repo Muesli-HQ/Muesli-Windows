@@ -34,6 +34,35 @@ function Resolve-CorpusPath {
     return (Resolve-Path -LiteralPath (Join-Path $manifestDirectory $Path)).Path
 }
 
+function Test-Flag {
+    param($Value)
+    if ($null -eq $Value) { return $false }
+    if ($Value -is [bool]) { return [bool]$Value }
+    return [string]$Value -eq "true"
+}
+
+function Test-PlaceholderIdentity {
+    param([string]$Value)
+    return $Value -match "(?i)^(placeholder|todo|tbd|unreviewed|automation|ci|n/?a|unknown|fake|example|dummy)$"
+}
+
+function Get-Sha256 {
+    param([string]$Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
 $cases = @($manifest.cases)
 if ($cases.Count -eq 0) { throw "Dictation corpus contains no cases: $resolvedManifest" }
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -54,38 +83,51 @@ foreach ($case in $cases) {
     }
 
     try {
-        $audioPath = Resolve-CorpusPath ([string](Get-Value $case "audio" ""))
         $outcome = ([string](Get-Value $case "expectedOutcome" "")).Trim().ToLowerInvariant()
         if ($outcome -notin @("transcript", "no-speech")) { throw "expectedOutcome must be transcript or no-speech" }
         $categories = @((Get-Value $case "categories" @()) | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
         if ($categories.Count -eq 0) { throw "at least one category is required" }
         foreach ($category in $categories) { [void]$covered.Add($category) }
 
+        if (Test-Flag (Get-Value $case "placeholder" $false)) {
+            throw "placeholder case is not human-reviewed evidence; record WAV, listen, write the reference, fill reviewedBy/reviewedAt, and remove placeholder"
+        }
+
         $provenance = ([string](Get-Value $case "referenceProvenance" "")).Trim().ToLowerInvariant()
+        if ($provenance -match "model") {
+            throw "model-only references are rejected; a human must listen and set human-transcribed or human-reviewed"
+        }
         if ($provenance -notin @("human-transcribed", "human-reviewed")) {
             throw "referenceProvenance must be human-transcribed or human-reviewed"
         }
         if ($outcome -eq "no-speech" -and $provenance -ne "human-reviewed") {
             throw "no-speech audio must be explicitly human-reviewed"
         }
-        $reviewedBy = [string](Get-Value $case "reviewedBy" "")
+        $reviewedBy = ([string](Get-Value $case "reviewedBy" "")).Trim()
         $reviewedAt = [string](Get-Value $case "reviewedAt" "")
         $parsedReviewDate = [DateTimeOffset]::MinValue
         if ([string]::IsNullOrWhiteSpace($reviewedBy) -or
+            (Test-PlaceholderIdentity $reviewedBy) -or
             -not [DateTimeOffset]::TryParse($reviewedAt, [ref]$parsedReviewDate)) {
-            throw "reviewedBy and a valid reviewedAt timestamp are required"
+            throw "reviewedBy must be a real human reviewer identity and reviewedAt must be a valid timestamp"
         }
 
+        $audioPath = Resolve-CorpusPath ([string](Get-Value $case "audio" ""))
         $referencePath = ""
         $referenceSha = ""
         $maxWer = -1.0
         $maxCer = -1.0
         if ($outcome -eq "transcript") {
             $referencePath = Resolve-CorpusPath ([string](Get-Value $case "reference" ""))
-            if ([string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $referencePath -Raw))) {
+            $referenceBytes = [System.IO.File]::ReadAllBytes($referencePath)
+            $referenceText = [System.Text.Encoding]::UTF8.GetString($referenceBytes).Trim([char]0xFEFF)
+            if ($referenceBytes.Length -eq 0 -or [string]::IsNullOrWhiteSpace($referenceText)) {
                 throw "reference transcript is empty"
             }
-            $referenceSha = (Get-FileHash -LiteralPath $referencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($referenceText -match "(?i)^\s*(placeholder|todo|tbd|\[model)") {
+                throw "reference transcript still looks like a placeholder or model dump; a human must listen and write it"
+            }
+            $referenceSha = Get-Sha256 $referencePath
             $maxWer = [double](Get-Value $case "maxWordErrorRate" (Get-Value $manifest "defaultMaxWordErrorRate" -1))
             $maxCer = [double](Get-Value $case "maxCharacterErrorRate" (Get-Value $manifest "defaultMaxCharacterErrorRate" -1))
             if ($maxWer -lt 0 -or $maxWer -ge 1 -or $maxCer -lt 0 -or $maxCer -ge 1) {
@@ -102,7 +144,7 @@ foreach ($case in $cases) {
             referenceProvenance = $provenance
             reviewedBy = $reviewedBy
             reviewedAt = $parsedReviewDate.ToString("O")
-            audioSha256 = (Get-FileHash -LiteralPath $audioPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            audioSha256 = Get-Sha256 $audioPath
             referenceSha256 = $referenceSha
             maxWordErrorRate = $maxWer
             maxCharacterErrorRate = $maxCer

@@ -23,6 +23,25 @@ param(
 
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($ReviewedBy)) { throw "ReviewedBy cannot be empty." }
+if ($ReviewedBy -match "(?i)^(placeholder|todo|tbd|unreviewed|automation|ci|n/?a|unknown|fake|example|dummy)$") {
+    throw "ReviewedBy must be a real human reviewer identity, not a placeholder."
+}
+if ($TraceId -notmatch "^[0-9a-f]{12}$") {
+    throw "TraceId must be the 12-character hex id from a Dictation latency trace log line. Placeholders are rejected."
+}
+
+$allowedTraceKeys = @(
+    "timestamp", "trace", "status", "engine", "model", "audioDurationMs", "chars",
+    "releaseToPasteMs", "releaseToUiSettledMs", "captureTotalMs", "captureStopDisposeMs",
+    "captureFlushWaitMs", "capturePreparationMs", "capturePreparation", "transcriptionWallMs",
+    "coordinatorTotalMs", "cleanupDictionaryMs", "fillerRemoval", "deliveryMode", "deliveryMs",
+    "clipboardMs", "focusWaitMs", "inputMs", "targetForeground", "targetProcess",
+    "targetProcessId", "historyPersisted", "persistenceUiMs"
+)
+$forbiddenTraceKeys = @(
+    "title", "windowtitle", "targetwindowtitle", "window", "transcript", "text",
+    "utterance", "reference", "expected", "observed"
+)
 if ([string]::IsNullOrWhiteSpace($LogPath)) {
     $logDirectory = Join-Path $env:APPDATA "muesli\logs"
     $LogPath = Get-ChildItem -LiteralPath $logDirectory -Filter "muesli-*.log" -File |
@@ -40,7 +59,16 @@ $traces = @(
             $record = [ordered]@{ timestamp = $Matches.timestamp }
             foreach ($pair in ($Matches.pairs -split ";\s*")) {
                 $parts = $pair.Split("=", 2)
-                if ($parts.Count -eq 2) { $record[$parts[0].Trim()] = $parts[1].Trim() }
+                if ($parts.Count -ne 2) { continue }
+                $name = $parts[0].Trim()
+                $value = $parts[1].Trim()
+                $normalized = $name.ToLowerInvariant()
+                if ($forbiddenTraceKeys -contains $normalized) {
+                    throw "Latency trace contained forbidden field '$name'. Window titles and transcript text must not be captured."
+                }
+                if ($allowedTraceKeys -contains $name) {
+                    $record[$name] = $value
+                }
             }
             [pscustomobject]$record
         }
