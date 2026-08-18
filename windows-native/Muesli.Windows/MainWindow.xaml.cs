@@ -1282,8 +1282,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public static Window CreateVisualPreview(Phase12PreviewMode mode) => new MainWindow();
-
     public MainWindow()
     {
         _globalHotkeyService = new GlobalHotkeyService();
@@ -4923,24 +4921,27 @@ private async Task EnsureBaseModelDownloadedAsync()
     {
         return;
     }
-    if (_runtimeDiagnosticsService.IsWhisperModelCached("base"))
+    var selected = SelectedTranscriptionModel;
+    if (_modelLifecycle.Snapshot(selected.Id).Status is TranscriptionModelStatus.Ready or TranscriptionModelStatus.Selected)
     {
         return;
     }
     try
     {
-        DictationStatus = "Downloading base model";
-        _toastNotificationService.Show("Downloading base model", "First-run setup", ToastState.Transcribing, 0);
-        var result = await _dictationCoordinator.DownloadModelAsync("whisper", "base");
-        DictationStatus = result.Text;
-        _toastNotificationService.Show("Model ready", "base", ToastState.Success, 3600);
+        DictationStatus = $"Downloading {selected.DisplayName}";
+        _toastNotificationService.Show("Downloading model", "First-run setup", ToastState.Transcribing, 0);
+        var progress = new Progress<ModelDownloadProgress>(value => DictationStatus = value.DisplayText);
+        await _modelLifecycle.PrepareAsync(selected.Id, progress);
+        DictationStatus = $"{selected.DisplayName} ready";
+        _toastNotificationService.Show("Model ready", selected.DisplayName, ToastState.Success, 3600);
+        OnPropertyChanged(nameof(SelectedModelCacheStatus));
         await RefreshRuntimeDiagnosticsAsync();
     }
     catch (Exception exception)
     {
-        DictationStatus = $"Base model download failed: {exception.Message}";
+        DictationStatus = $"Model download failed: {exception.Message}";
         _logService.Error("Base model auto-download failed.", exception);
-        _toastNotificationService.Show("Model download failed", "Retry from Models → Download base.", ToastState.Error, 5200);
+        _toastNotificationService.Show("Model download failed", "Retry from Models → Download.", ToastState.Error, 5200);
     }
 }
 public string SetupReadiness

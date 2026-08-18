@@ -129,6 +129,20 @@ public partial class App : System.Windows.Application
         {
             LogService.Error("Unhandled UI exception.", args.Exception);
             Sentry.SentrySdk.CaptureException(args.Exception);
+            args.Handled = true;
+            System.Windows.MessageBox.Show(
+                "Muesli hit an unexpected error. The details were saved to the logs folder.",
+                "Muesli",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception exception)
+            {
+                LogService.Error("Unhandled app-domain exception.", exception);
+                Sentry.SentrySdk.CaptureException(exception);
             }
             else
             {
@@ -141,6 +155,89 @@ public partial class App : System.Windows.Application
         {
             LogService.Error("Unobserved task exception.", args.Exception);
             Sentry.SentrySdk.CaptureException(args.Exception);
+            args.SetObserved();
+        };
+
+        Exit += (_, _) =>
+        {
+            _sentryDisposable?.Dispose();
+        };
+
+        var window = new MainWindow();
+        MainWindow = window;
+        if (_activationPending)
+        {
+            Dispatcher.BeginInvoke(ActivatePrimaryDashboard);
+        }
+
+        if (!window.OpenDashboardOnLaunch)
+        {
+            window.ParkForBackgroundLaunch();
+            window.StartRuntime(showOnboarding: false);
+            window.SetBackgroundStatus();
+            return;
+        }
+
+        window.Show();
+    }
+
+    private void TryInitializeSentry()
+    {
+        try
+        {
+            var settings = new Services.SettingsStore().Load();
+            if (!settings.CrashReportingEnabled)
+            {
+                return;
+            }
+
+            var dsn = ResolveSentryDsn();
+            if (string.IsNullOrWhiteSpace(dsn))
+            {
+                LogService.Info("Crash reporting enabled but no Sentry DSN resolved; skipping Sentry init.");
+                return;
+            }
+
+            var release = $"muesli-windows@{Assembly.GetExecutingAssembly().GetName().Version}";
+            _sentryDisposable = Sentry.SentrySdk.Init(options =>
+            {
+                options.Dsn = dsn;
+                options.AutoSessionTracking = true;
+                options.SendDefaultPii = false;
+                options.Release = release;
+                options.Environment =
+#if DEBUG
+                    "dev";
+#else
+                    "prod";
+#endif
+                options.MaxBreadcrumbs = 50;
+                options.SetBeforeSend(Services.SentryScrubber.Scrub);
+                options.SetBeforeBreadcrumb(Services.SentryScrubber.ScrubBreadcrumb);
+            });
+            LogService.Info("Sentry crash reporting initialized.");
+        }
+        catch (Exception exception)
+        {
+            LogService.Error("Sentry initialization failed.", exception);
+        }
+    }
+
+    private static string? ResolveSentryDsn()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("MUESLI_SENTRY_DSN");
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+        {
+            return fromEnv;
+        }
+
+        var embedded = Assembly.GetExecutingAssembly()
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => string.Equals(a.Key, "SentryDsn", StringComparison.Ordinal))
+            ?.Value;
+        return string.IsNullOrWhiteSpace(embedded) ? null : embedded;
+    }
+
     protected override void OnExit(System.Windows.ExitEventArgs e)
     {
         _singleInstance?.Dispose();

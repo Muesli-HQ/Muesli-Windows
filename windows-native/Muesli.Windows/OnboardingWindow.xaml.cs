@@ -15,11 +15,6 @@ namespace Muesli.Windows;
 /// <summary>Lifecycle state deliberately contains no model path, transcript, or secret material.</summary>
 public sealed record OnboardingModelSnapshot(string StatusText, bool IsReady, bool IsBusy, bool CanPrepare, bool CanCancel, bool CanRetry, bool CanVerify, double? ProgressPercent = null);
 
-public sealed record LiveModelChoice(string? Id, string Label)
-{
-    public static readonly LiveModelChoice Off = new(null, "Off");
-}
-
 public sealed record OnboardingContext(
     IReadOnlyList<string> Microphones, IReadOnlyList<string> Hotkeys, IReadOnlyList<TranscriptionModelDefinition> Models,
     IReadOnlyList<LiveModelChoice> LiveModels, OnboardingDraft Draft, string OllamaEndpoint,
