@@ -138,6 +138,7 @@
                         <TextBlock Text="Paste behavior" Style="{StaticResource SettingsRowLabel}" />
                         <ComboBox Grid.Column="1" Style="{StaticResource MuesliComboBox}" ItemsSource="{Binding PasteBehaviors}" SelectedItem="{Binding SelectedPasteBehavior}" />
                       </Grid>
+                      <TextBlock Grid.ColumnSpan="2" Text="Active-app insertion leaves your existing clipboard alone. Choose clipboard only when you want the transcript available for manual pasting." Margin="0,8,0,0" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" />
                       <Button Margin="0,16,0,0" HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}" PreviewMouseDown="ForwardMouseButton" features:FeatureAction.Name="HoldToDictate_MouseDown" PreviewMouseUp="ForwardMouseButton" features:FeatureAction.MouseUpName="HoldToDictate_MouseUp" Content="Hold to dictate" />
                     </StackPanel>
                   </Border>

@@ -460,10 +460,11 @@ private async Task StopDictationAsync()
         var deliveryStarted = Stopwatch.StartNew();
         PasteOperationResult pasteResult;
         var deliveryMode = "clipboard";
+        var activeAppDeliveryRequested = _shouldPasteToActiveApp && SelectedPasteBehavior == "active-app";
         var deliverySucceeded = true;
         try
         {
-            if (_shouldPasteToActiveApp && SelectedPasteBehavior == "active-app")
+            if (activeAppDeliveryRequested)
             {
                 deliveryMode = "active-app";
                 pasteResult = await _activeAppPasteService.PasteTextAsync(textToUse, _pasteTargetWindow);
@@ -497,14 +498,24 @@ private async Task StopDictationAsync()
             deliverySucceeded = false;
             var fallbackCopied = false;
             long fallbackClipboardMs = 0;
-            try
+            if (!activeAppDeliveryRequested)
             {
-                fallbackClipboardMs = await _activeAppPasteService.CopyTextAsync(textToUse);
-                fallbackCopied = true;
+                try
+                {
+                    fallbackClipboardMs = await _activeAppPasteService.CopyTextAsync(textToUse);
+                    fallbackCopied = true;
+                }
+                catch (Exception clipboardException)
+                {
+                    _logService.Error("Clipboard fallback failed; the transcript remains in dictation history.", clipboardException);
+                }
             }
-            catch (Exception clipboardException)
+            else
             {
-                _logService.Error("Clipboard fallback failed; the transcript remains in dictation history.", clipboardException);
+                // Active-app delivery is clipboard-safe. If focus or direct input fails,
+                // keep the user's clipboard untouched and let dictation history be the
+                // recovery path instead of replacing a deliberate copy with a fallback.
+                _logService.Info("Active-app delivery failed; transcript remains in dictation history and the clipboard was left unchanged.");
             }
             pasteResult = new PasteOperationResult(
                 deliveryStarted.ElapsedMilliseconds,
@@ -512,17 +523,23 @@ private async Task StopDictationAsync()
                 0,
                 0,
                 false);
-            DictationStatus = fallbackCopied
+            DictationStatus = activeAppDeliveryRequested
                 ? persistenceSucceeded
-                    ? "Paste failed; transcript copied and saved in history"
-                    : "Paste failed; transcript copied and visible in the dashboard"
-                : persistenceSucceeded
-                    ? "Paste and clipboard failed; transcript saved in history"
-                    : "Delivery and history save failed; transcript remains visible in the dashboard";
+                    ? "Paste failed; transcript saved in history; clipboard unchanged"
+                    : "Paste failed; transcript remains visible in the dashboard; clipboard unchanged"
+                : fallbackCopied
+                    ? persistenceSucceeded
+                        ? "Paste failed; transcript copied and saved in history"
+                        : "Paste failed; transcript copied and visible in the dashboard"
+                    : persistenceSucceeded
+                        ? "Paste and clipboard failed; transcript saved in history"
+                        : "Delivery and history save failed; transcript remains visible in the dashboard";
             _logService.Error("Active-app paste failed after successful dictation.", exception);
             _toastNotificationService.Show(
                 "Dictation saved",
-                fallbackCopied ? "Paste failed; copied to clipboard" : "Open dictation history to recover it",
+                activeAppDeliveryRequested
+                    ? "Paste failed; clipboard unchanged. Open dictation history to recover the transcript."
+                    : fallbackCopied ? "Paste failed; copied to clipboard" : "Open dictation history to recover it",
                 ToastState.Error);
         }
 

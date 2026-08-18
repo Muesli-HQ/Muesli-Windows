@@ -106,8 +106,10 @@ hands-free profile loss/reappearance, silence, background noise, Escape cancel
 during capture, Escape cancel during transcription, hands-free click-to-stop,
 clipboard-only mode, target closure, and elevated-target rejection. Confirm
 that finalized route segments are recovered, fallback is disclosed, no
-cancelled/no-speech item enters history, a failed paste leaves the transcript
-on the clipboard or in history, and temporary timestamped WAVs are removed.
+cancelled/no-speech item enters history, active-app delivery leaves the
+pre-existing clipboard unchanged on failure, and temporary timestamped WAVs
+are removed. Clipboard-only mode is intentionally allowed to replace the
+clipboard because it is an explicit user-selected delivery mode.
 
 Use a fresh log byte marker before the exercise. The appended slice must contain
 no transcript text, window title, `ERROR`, `Unhandled UI exception`, or

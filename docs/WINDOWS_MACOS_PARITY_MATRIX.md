@@ -30,7 +30,7 @@ Owner modules are launch-program Phase 0–13. They are not the historical P0–
 | ID | Capability | macOS reference | Windows evidence | Status | Owner |
 |---|---|---|---|---|---|
 | DIC-01 | Hold-to-talk, local transcription, persistence | `AppScopedDictationRecorder.swift`, `DictationStore.swift` | `DictationHotkeyStateMachine.cs`, `DictationCoordinator.cs`, `AudioCaptureService.cs` | Implemented with verification debt | Phase 2 |
-| DIC-02 | Paste at original cursor, clipboard restore | Hotkey/paste path | `ActiveAppPasteService.cs`; `HotkeyAndPasteTests.cs` | Implemented with verification debt | Phase 2 |
+| DIC-02 | Insert at original cursor without replacing the clipboard; clipboard-safe fallback | Hotkey/paste path | `ActiveAppPasteService.cs`; `HotkeyAndPasteTests.cs` | Implemented with verification debt | Phase 2 |
 | DIC-03 | History copy, delete, filter, search | `DictationsView.swift`, `DictationStore.swift` | WPF list + `AppDataStore.cs` | Implemented with verification debt | Phase 2 |
 | HOT-01 | Configurable hold hotkey | `HotkeyMonitor.swift`, `ShortcutHotkeyPolicy.swift` | `GlobalHotkeyService.cs`, `HotkeyGesture.cs` | Implemented with verification debt | Phase 2 |
 | HOT-02 | Double-tap hands-free | Hotkey controller | `DictationHotkeyStateMachine.cs`; `Phase2DictationTests.cs` | Implemented with verification debt | Phase 2 |

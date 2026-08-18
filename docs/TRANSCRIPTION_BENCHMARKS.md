@@ -114,8 +114,10 @@ regression:
 
 Every real dictation now writes one correlated `Dictation latency trace` log
 entry. It separates capture stop/dispose, file flush, audio preparation,
-transcription, dictionary cleanup, clipboard, target-window focus, input,
-persistence/UI work, release-to-paste, and release-to-settled time.
+transcription, dictionary cleanup, target-window focus, direct-input or
+clipboard fallback, persistence/UI work, release-to-paste, and
+release-to-settled time. The default active-app path does not touch the
+user's clipboard; `clipboardMs=0` is expected when direct input succeeds.
 
 Summarize the latest real dictations without Python:
 

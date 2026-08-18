@@ -103,7 +103,7 @@ Remaining class: **None** (done at the stated status), **Implementation**, **Qua
 | ID | Capability | Status | Owner | Remaining |
 |---|---|---|---|---|
 | DIC-01 | Hold-to-talk capture, local transcription, persistence | Implemented with verification debt | Phase 2 | Qualification: human microphone corpus WER/CER |
-| DIC-02 | Paste at original cursor with clipboard restore and failure disclosure | Implemented with verification debt | Phase 2 | Qualification: Notepad, Chrome, Office, other editor |
+| DIC-02 | Insert at original cursor without replacing the clipboard; clipboard-safe fallback and failure disclosure | Implemented with verification debt | Phase 2 | Qualification: Notepad, Chrome, Office, other editor |
 | DIC-03 | History copy/delete/date filter/search | Implemented with verification debt | Phase 2 | Qualification: dashboard UI exercise |
 | HOT-01 | Configurable hold hotkey, exact modifiers, Escape cancel | Implemented with verification debt | Phase 2 | Qualification: layouts, elevation, real hook |
 | HOT-02 | Double-tap hands-free state machine | Implemented with verification debt | Phase 2 | Qualification: real global hook |

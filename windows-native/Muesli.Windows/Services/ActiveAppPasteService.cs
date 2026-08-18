@@ -8,9 +8,11 @@ public sealed class ActiveAppPasteService
 {
     private const uint InputKeyboard = 1;
     private const uint KeyeventfKeyup = 0x0002;
+    private const uint KeyeventfUnicode = 0x0004;
     private const ushort VkControl = 0x11;
     private const ushort VkV = 0x56;
     private const int SwRestore = 9;
+    private const int UnicodeTextBatchLength = 256;
 
     private readonly IClipboardAdapter _clipboard;
     private readonly IWindowActivationAdapter _windows;
@@ -80,15 +82,10 @@ public sealed class ActiveAppPasteService
         }
 
         var totalStarted = Stopwatch.StartNew();
-        var clipboardStarted = Stopwatch.StartNew();
-        var previousClipboard = await _clipboard.CaptureAsync(cancellationToken);
-        await _clipboard.SetTextAsync(text, cancellationToken);
-        clipboardStarted.Stop();
-
         var focusStarted = Stopwatch.StartNew();
         if (!_windows.Exists(targetWindow))
         {
-            throw new InvalidOperationException("The app that was active when dictation started is no longer available. The transcript remains on the clipboard.");
+            throw new InvalidOperationException("The app that was active when dictation started is no longer available. The transcript was saved in Muesli history and the clipboard was left unchanged.");
         }
 
         _windows.RequestForeground(targetWindow);
@@ -96,30 +93,36 @@ public sealed class ActiveAppPasteService
         focusStarted.Stop();
         if (!targetWasForeground)
         {
-            throw new InvalidOperationException("Windows could not restore focus to the original app. The transcript remains on the clipboard.");
+            throw new InvalidOperationException("Windows could not restore focus to the original app. The transcript was saved in Muesli history and the clipboard was left unchanged.");
         }
 
         var inputStarted = Stopwatch.StartNew();
-        var sent = _keyboard.SendPasteShortcut();
+        var directInput = _keyboard.SendText(text);
         inputStarted.Stop();
-        if (!sent)
+        if (directInput.Succeeded)
         {
-            var error = Marshal.GetLastWin32Error();
-            throw new InvalidOperationException(
-                error == 5
-                    ? "Windows blocked paste input. If the target app is running as administrator, run Muesli as administrator too."
-                    : $"Windows did not accept the paste input. Win32 error: {error}.");
+            totalStarted.Stop();
+            return new PasteOperationResult(
+                totalStarted.ElapsedMilliseconds,
+                0,
+                focusStarted.ElapsedMilliseconds,
+                inputStarted.ElapsedMilliseconds,
+                targetWasForeground);
         }
 
-        _ = RestoreClipboardSafelyAsync(previousClipboard, text);
+        if (directInput.MayHaveInsertedText)
+        {
+            throw new InvalidOperationException("Windows only accepted part of the transcript input. The transcript was saved in Muesli history and the clipboard was left unchanged.");
+        }
 
-        totalStarted.Stop();
-        return new PasteOperationResult(
-            totalStarted.ElapsedMilliseconds,
-            clipboardStarted.ElapsedMilliseconds,
+        // Unicode input is the normal path because it never touches the user's clipboard.
+        // If Windows rejects it before inserting anything, retain the compatibility path:
+        // temporarily use the clipboard for Ctrl+V and restore the prior contents safely.
+        return await PasteThroughClipboardAsync(
+            text,
+            totalStarted,
             focusStarted.ElapsedMilliseconds,
-            inputStarted.ElapsedMilliseconds,
-            targetWasForeground);
+            cancellationToken);
     }
 
     public static bool ShouldRestoreClipboard(string expectedMuesliText, string? currentText) =>
@@ -148,11 +151,70 @@ public sealed class ActiveAppPasteService
         return _windows.ForegroundWindow == targetWindow;
     }
 
-    private async Task RestoreClipboardSafelyAsync(ClipboardSnapshot previousClipboard, string placedText)
+    private async Task<PasteOperationResult> PasteThroughClipboardAsync(
+        string text,
+        Stopwatch totalStarted,
+        long focusWaitMs,
+        CancellationToken cancellationToken)
+    {
+        var clipboardStarted = Stopwatch.StartNew();
+        ClipboardSnapshot? previousClipboard = null;
+        var clipboardWasSet = false;
+        try
+        {
+            previousClipboard = await _clipboard.CaptureAsync(cancellationToken);
+            // Treat the clipboard as potentially modified for the whole SetText call.
+            // An adapter can fail after handing the data to the OS, so the catch path
+            // must still attempt a conditional restore.
+            clipboardWasSet = true;
+            await _clipboard.SetTextAsync(text, cancellationToken);
+            clipboardStarted.Stop();
+
+            var inputStarted = Stopwatch.StartNew();
+            var sent = _keyboard.SendPasteShortcut();
+            inputStarted.Stop();
+            if (!sent)
+            {
+                var error = Marshal.GetLastWin32Error();
+                throw new InvalidOperationException(
+                    error == 5
+                        ? "Windows blocked paste input. The transcript was saved in Muesli history and the clipboard was left unchanged. If the target app is running as administrator, run Muesli as administrator too."
+                        : $"Windows did not accept the paste input. The transcript was saved in Muesli history and the clipboard was left unchanged. Win32 error: {error}.");
+            }
+
+            _ = RestoreClipboardSafelyAsync(previousClipboard, text, TimeSpan.FromMilliseconds(450));
+
+            totalStarted.Stop();
+            return new PasteOperationResult(
+                totalStarted.ElapsedMilliseconds,
+                clipboardStarted.ElapsedMilliseconds,
+                focusWaitMs,
+                inputStarted.ElapsedMilliseconds,
+                true);
+        }
+        catch
+        {
+            // A failed fallback must not strand Muesli text in the clipboard. Restore
+            // immediately, but only if the user has not copied something else meanwhile.
+            if (clipboardWasSet && previousClipboard is not null)
+            {
+                await RestoreClipboardSafelyAsync(previousClipboard, text, TimeSpan.Zero);
+            }
+            throw;
+        }
+    }
+
+    private async Task RestoreClipboardSafelyAsync(
+        ClipboardSnapshot previousClipboard,
+        string placedText,
+        TimeSpan delay)
     {
         try
         {
-            await _delay.DelayAsync(TimeSpan.FromMilliseconds(450), CancellationToken.None);
+            if (delay > TimeSpan.Zero)
+            {
+                await _delay.DelayAsync(delay, CancellationToken.None);
+            }
             var currentText = await _clipboard.ReadTextAsync(CancellationToken.None);
             if (ShouldRestoreClipboard(placedText, currentText))
             {
@@ -175,6 +237,36 @@ public sealed class ActiveAppPasteService
             KeyboardInput(VkControl, KeyeventfKeyup)
         };
         return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) == inputs.Length;
+    }
+
+    internal static TextInputResult SendUnicodeText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return new TextInputResult(true, false);
+        }
+
+        var mayHaveInsertedText = false;
+        for (var offset = 0; offset < text.Length; offset += UnicodeTextBatchLength)
+        {
+            var length = Math.Min(UnicodeTextBatchLength, text.Length - offset);
+            var inputs = new Input[length * 2];
+            for (var index = 0; index < length; index++)
+            {
+                var character = text[offset + index];
+                inputs[index * 2] = UnicodeKeyboardInput(character, 0);
+                inputs[index * 2 + 1] = UnicodeKeyboardInput(character, KeyeventfKeyup);
+            }
+
+            var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+            if (sent != inputs.Length)
+            {
+                return new TextInputResult(false, mayHaveInsertedText || sent > 0);
+            }
+            mayHaveInsertedText = true;
+        }
+
+        return new TextInputResult(true, mayHaveInsertedText);
     }
 
     internal static int NativeInputStructureSize => Marshal.SizeOf<Input>();
@@ -236,6 +328,25 @@ public sealed class ActiveAppPasteService
                     VirtualKey = virtualKey,
                     ScanCode = 0,
                     Flags = flags,
+                    Time = 0,
+                    ExtraInfo = UIntPtr.Zero
+                }
+            }
+        };
+    }
+
+    private static Input UnicodeKeyboardInput(char character, uint flags)
+    {
+        return new Input
+        {
+            Type = InputKeyboard,
+            Data = new InputUnion
+            {
+                Keyboard = new KeyboardInputData
+                {
+                    VirtualKey = 0,
+                    ScanCode = character,
+                    Flags = flags | KeyeventfUnicode,
                     Time = 0,
                     ExtraInfo = UIntPtr.Zero
                 }
@@ -345,7 +456,10 @@ public interface IWindowActivationAdapter
 public interface IKeyboardInputAdapter
 {
     bool SendPasteShortcut();
+    TextInputResult SendText(string text);
 }
+
+public readonly record struct TextInputResult(bool Succeeded, bool MayHaveInsertedText);
 
 public interface IAsyncDelay
 {
@@ -369,6 +483,8 @@ public sealed class NativeWindowActivationAdapter : IWindowActivationAdapter
 public sealed class NativeKeyboardInputAdapter : IKeyboardInputAdapter
 {
     public bool SendPasteShortcut() => ActiveAppPasteService.SendCtrlV();
+
+    public TextInputResult SendText(string text) => ActiveAppPasteService.SendUnicodeText(text);
 }
 
 public sealed class WpfClipboardAdapter : IClipboardAdapter
@@ -388,7 +504,7 @@ public sealed class WpfClipboardAdapter : IClipboardAdapter
     {
         if (snapshot.Data is null)
         {
-            return Task.CompletedTask;
+            return InvokeWithRetriesAsync(System.Windows.Clipboard.Clear, cancellationToken);
         }
         return InvokeWithRetriesAsync(() => System.Windows.Clipboard.SetDataObject(snapshot.Data, true), cancellationToken);
     }

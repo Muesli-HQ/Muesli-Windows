@@ -32,12 +32,29 @@ public sealed class HotkeyAndPasteTests
     }
 
     [Fact]
-    public async Task PasteSuccessRestoresOnlyUnchangedMuesliClipboard()
+    public async Task ActiveAppDeliveryTypesWithoutTouchingClipboard()
+    {
+        var clipboard = new FakeClipboard("before");
+        var windows = new FakeWindows { ExistsValue = true, FocusSucceeds = true };
+        var keyboard = new FakeKeyboard(new TextInputResult(true, true), pasteResult: true);
+        var service = new ActiveAppPasteService(clipboard, windows, keyboard, new ControlledDelay());
+
+        var result = await service.PasteTextAsync("transcript", (IntPtr)42);
+
+        Assert.True(result.TargetWasForeground);
+        Assert.Equal("before", clipboard.Text);
+        Assert.Equal(1, keyboard.TextCalls);
+        Assert.Equal(0, keyboard.PasteCalls);
+    }
+
+    [Fact]
+    public async Task ClipboardFallbackRestoresOnlyUnchangedMuesliClipboard()
     {
         var clipboard = new FakeClipboard("before");
         var windows = new FakeWindows { ExistsValue = true, FocusSucceeds = true };
         var delay = new ControlledDelay();
-        var service = new ActiveAppPasteService(clipboard, windows, new FakeKeyboard(true), delay);
+        var keyboard = new FakeKeyboard(new TextInputResult(false, false), pasteResult: true);
+        var service = new ActiveAppPasteService(clipboard, windows, keyboard, delay);
 
         var result = await service.PasteTextAsync("transcript", (IntPtr)42);
         Assert.True(result.TargetWasForeground);
@@ -55,7 +72,7 @@ public sealed class HotkeyAndPasteTests
         var service = new ActiveAppPasteService(
             clipboard,
             new FakeWindows { ExistsValue = true, FocusSucceeds = true },
-            new FakeKeyboard(true),
+            new FakeKeyboard(new TextInputResult(false, false), pasteResult: true),
             delay);
         await service.PasteTextAsync("transcript", (IntPtr)42);
         clipboard.Text = "new user copy";
@@ -69,26 +86,67 @@ public sealed class HotkeyAndPasteTests
     [InlineData(false, true, true)]
     [InlineData(true, false, true)]
     [InlineData(true, true, false)]
-    public async Task PasteFailureLeavesTranscriptOnClipboard(bool exists, bool focus, bool injects)
+    public async Task PasteFailurePreservesExistingClipboard(bool exists, bool focus, bool injects)
     {
         var clipboard = new FakeClipboard("before");
         var service = new ActiveAppPasteService(
             clipboard,
             new FakeWindows { ExistsValue = exists, FocusSucceeds = focus },
-            new FakeKeyboard(injects),
+            new FakeKeyboard(new TextInputResult(false, false), pasteResult: injects),
             new ControlledDelay());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.PasteTextAsync("transcript", (IntPtr)42));
-        Assert.Equal("transcript", clipboard.Text);
+        Assert.Equal("before", clipboard.Text);
     }
 
-    private sealed class FakeClipboard(string? initial) : IClipboardAdapter
+    [Fact]
+    public async Task PartialDirectInputDoesNotFallBackAndDoesNotReplaceClipboard()
+    {
+        var clipboard = new FakeClipboard("before");
+        var keyboard = new FakeKeyboard(new TextInputResult(false, true), pasteResult: true);
+        var service = new ActiveAppPasteService(
+            clipboard,
+            new FakeWindows { ExistsValue = true, FocusSucceeds = true },
+            keyboard,
+            new ControlledDelay());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.PasteTextAsync("transcript", (IntPtr)42));
+
+        Assert.Equal("before", clipboard.Text);
+        Assert.Equal(0, keyboard.PasteCalls);
+    }
+
+    [Fact]
+    public async Task ClipboardAdapterFailureAfterSettingTextRestoresExistingClipboard()
+    {
+        var clipboard = new FakeClipboard("before", throwAfterSet: true);
+        var service = new ActiveAppPasteService(
+            clipboard,
+            new FakeWindows { ExistsValue = true, FocusSucceeds = true },
+            new FakeKeyboard(new TextInputResult(false, false), pasteResult: true),
+            new ControlledDelay());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.PasteTextAsync("transcript", (IntPtr)42));
+
+        Assert.Equal("before", clipboard.Text);
+    }
+
+    private sealed class FakeClipboard(string? initial, bool throwAfterSet = false) : IClipboardAdapter
     {
         public string? Text { get; set; } = initial;
+        public bool ThrowAfterSet { get; } = throwAfterSet;
         public TaskCompletionSource Restored { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<ClipboardSnapshot> CaptureAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new ClipboardSnapshot(new System.Windows.DataObject("Text", Text ?? "")));
-        public Task SetTextAsync(string text, CancellationToken cancellationToken) { Text = text; return Task.CompletedTask; }
+        public Task SetTextAsync(string text, CancellationToken cancellationToken)
+        {
+            Text = text;
+            if (ThrowAfterSet)
+            {
+                throw new InvalidOperationException("simulated clipboard adapter failure");
+            }
+            return Task.CompletedTask;
+        }
         public Task<string?> ReadTextAsync(CancellationToken cancellationToken) => Task.FromResult(Text);
         public Task RestoreAsync(ClipboardSnapshot snapshot, CancellationToken cancellationToken)
         {
@@ -111,9 +169,22 @@ public sealed class HotkeyAndPasteTests
         }
     }
 
-    private sealed record FakeKeyboard(bool Result) : IKeyboardInputAdapter
+    private sealed class FakeKeyboard(TextInputResult textResult, bool pasteResult) : IKeyboardInputAdapter
     {
-        public bool SendPasteShortcut() => Result;
+        public int TextCalls { get; private set; }
+        public int PasteCalls { get; private set; }
+
+        public TextInputResult SendText(string text)
+        {
+            TextCalls++;
+            return textResult;
+        }
+
+        public bool SendPasteShortcut()
+        {
+            PasteCalls++;
+            return pasteResult;
+        }
     }
 
     private sealed class ControlledDelay : IAsyncDelay
