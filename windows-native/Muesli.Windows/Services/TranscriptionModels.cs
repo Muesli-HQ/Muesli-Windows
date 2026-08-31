@@ -2,6 +2,12 @@ using System.Text.Json.Serialization;
 
 namespace Muesli.Windows.Services;
 
+public sealed record TranscriptionResult(
+    string Text,
+    string? Diagnostic = null,
+    int DurationMs = 0,
+    List<TranscriptSegment>? Segments = null);
+
 public sealed record TranscriptSegment(
     [property: JsonPropertyName("id")]
     string Id,

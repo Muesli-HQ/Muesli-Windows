@@ -16,15 +16,29 @@ public sealed class GlobalHotkeyService : IDisposable
     private IntPtr _hookId = IntPtr.Zero;
     private HotkeyGesture _gesture = HotkeyGesture.Parse("F8");
     private bool _isDown;
+    private bool _escapeDown;
     private Action? _onDown;
     private Action? _onUp;
+    private Func<bool>? _canCancel;
+    private Action? _onCancel;
 
-    public void Register(string gesture, Action onDown, Action onUp)
+    public void Register(
+        string gesture,
+        Action onDown,
+        Action onUp,
+        Func<bool>? canCancel = null,
+        Action? onCancel = null)
     {
         Dispose();
         _gesture = HotkeyGesture.Parse(gesture);
+        if (_gesture.Key == Key.Escape)
+        {
+            throw new InvalidOperationException("Escape is reserved for cancelling dictation.");
+        }
         _onDown = onDown;
         _onUp = onUp;
+        _canCancel = canCancel;
+        _onCancel = onCancel;
         _hookProc = HookCallback;
         _hookId = SetHook(_hookProc);
         if (_hookId == IntPtr.Zero)
@@ -43,6 +57,7 @@ public sealed class GlobalHotkeyService : IDisposable
         UnhookWindowsHookEx(_hookId);
         _hookId = IntPtr.Zero;
         _isDown = false;
+        _escapeDown = false;
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -52,18 +67,37 @@ public sealed class GlobalHotkeyService : IDisposable
             var message = wParam.ToInt32();
             var vkCode = Marshal.ReadInt32(lParam);
             var key = KeyInterop.KeyFromVirtualKey(vkCode);
-            if (_gesture.Matches(key, ModifierKeysFromState()))
+            var isKeyDownMessage = message == WmKeydown || message == WmSyskeydown;
+            var isKeyUpMessage = message == WmKeyup || message == WmSyskeyup;
+            if (key == Key.Escape && (_escapeDown || (_canCancel?.Invoke() ?? false)))
             {
-                if ((message == WmKeydown || message == WmSyskeydown) && !_isDown)
+                if (isKeyDownMessage && !_escapeDown)
+                {
+                    _escapeDown = true;
+                    _onCancel?.Invoke();
+                }
+                else if (isKeyUpMessage)
+                {
+                    _escapeDown = false;
+                }
+                return (IntPtr)1;
+            }
+
+            if (isKeyDownMessage && _gesture.Matches(key, ModifierKeysFromState()))
+            {
+                if (!_isDown)
                 {
                     _isDown = true;
                     _onDown?.Invoke();
                 }
-                else if ((message == WmKeyup || message == WmSyskeyup) && _isDown)
-                {
-                    _isDown = false;
-                    _onUp?.Invoke();
-                }
+                return (IntPtr)1;
+            }
+            else if (isKeyUpMessage && key == _gesture.Key && _isDown)
+            {
+                // Release must complete the gesture even if modifiers were released in a different order.
+                _isDown = false;
+                _onUp?.Invoke();
+                return (IntPtr)1;
             }
         }
 
@@ -135,53 +169,4 @@ public sealed class GlobalHotkeyService : IDisposable
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
-    private sealed record HotkeyGesture(Key Key, ModifierKeys Modifiers, string Label)
-    {
-        public static HotkeyGesture Parse(string value)
-        {
-            var label = string.IsNullOrWhiteSpace(value) ? "F8" : value.Trim();
-            var key = Key.None;
-            var modifiers = ModifierKeys.None;
-
-            foreach (var rawPart in label.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var part = rawPart.Replace(" ", "", StringComparison.OrdinalIgnoreCase);
-                if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase) ||
-                    part.Equals("Control", StringComparison.OrdinalIgnoreCase))
-                {
-                    modifiers |= ModifierKeys.Control;
-                }
-                else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase))
-                {
-                    modifiers |= ModifierKeys.Shift;
-                }
-                else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase) ||
-                         part.Equals("Option", StringComparison.OrdinalIgnoreCase))
-                {
-                    modifiers |= ModifierKeys.Alt;
-                }
-                else if (part.Equals("Win", StringComparison.OrdinalIgnoreCase) ||
-                         part.Equals("Windows", StringComparison.OrdinalIgnoreCase))
-                {
-                    modifiers |= ModifierKeys.Windows;
-                }
-                else if (!Enum.TryParse(part, ignoreCase: true, out key))
-                {
-                    throw new InvalidOperationException($"Unsupported hotkey: {label}");
-                }
-            }
-
-            if (key == Key.None)
-            {
-                throw new InvalidOperationException($"Unsupported hotkey: {label}");
-            }
-
-            return new HotkeyGesture(key, modifiers, label);
-        }
-
-        public bool Matches(Key key, ModifierKeys modifiers)
-        {
-            return key == Key && (modifiers & Modifiers) == Modifiers;
-        }
-    }
 }

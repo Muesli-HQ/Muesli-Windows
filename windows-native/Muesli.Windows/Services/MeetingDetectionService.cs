@@ -8,40 +8,98 @@ namespace Muesli.Windows.Services;
 
 public sealed class MeetingDetectionService : IDisposable
 {
-    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(3) };
+    private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(3);
     private readonly AppLogService _logService = new();
-    private string _lastDetectedKey = "";
-    private DateTime _lastDetectedAt = DateTime.MinValue;
+    private readonly MeetingPresenceSignals _signals = new();
+    private readonly MeetingCandidateResolver _resolver = new();
+    private readonly SemaphoreSlim _scanGate = new(1, 1);
+    private CancellationTokenSource? _loop;
+    private Task? _loopTask;
     private int _scanCount;
+    private int _disposed;
 
     public event EventHandler<DetectedMeeting>? MeetingDetected;
     public event EventHandler<MeetingDetectionScan>? ScanCompleted;
 
-    public MeetingDetectionService()
-    {
-        _timer.Tick += (_, _) => DetectForegroundMeeting();
-    }
+    public bool IsRunning => _loop is { IsCancellationRequested: false };
 
-    public bool IsRunning => _timer.IsEnabled;
-
+    /// <summary>
+    /// Scanning runs on a background loop rather than a <see cref="DispatcherTimer"/>. A scan walks
+    /// every top-level window and, for browsers, a UI Automation subtree; on the dispatcher that
+    /// stalls rendering and input for as long as the walk takes.
+    /// </summary>
     public void Start()
     {
-        _timer.Start();
+        if (Volatile.Read(ref _disposed) != 0 || IsRunning) return;
+        _loop = new CancellationTokenSource();
+        var token = _loop.Token;
         _logService.Info("Meeting detection started.");
-        DetectMeeting(publish: true);
+        _loopTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    await ScanAsync(publish: true, token).ConfigureAwait(false);
+                    await Task.Delay(ScanInterval, token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception)
+            {
+                _logService.Error("Meeting detection loop stopped unexpectedly.", exception);
+            }
+        }, token);
     }
 
     public void Stop()
     {
-        _timer.Stop();
+        var loop = Interlocked.Exchange(ref _loop, null);
+        if (loop is null) return;
+        loop.Cancel();
+        try { _loopTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
+        loop.Dispose();
+        _loopTask = null;
+        _resolver.Reset();
         _logService.Info("Meeting detection stopped.");
     }
 
-    public void Dispose() => _timer.Stop();
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        Stop();
+        _signals.Dispose();
+        _scanGate.Dispose();
+    }
 
-    public MeetingDetectionScan CheckNow(bool publish = true) => DetectMeeting(publish);
+    /// <summary>Suppresses further prompts for this meeting until it ends and starts again.</summary>
+    public void DismissCandidate(string? key) => _resolver.Dismiss(key);
 
-    private void DetectForegroundMeeting() => DetectMeeting(publish: true);
+    public MeetingDetectionScan CheckNow(bool publish = true) =>
+        ScanAsync(publish, CancellationToken.None).GetAwaiter().GetResult();
+
+    private async Task<MeetingDetectionScan> ScanAsync(bool publish, CancellationToken cancellationToken)
+    {
+        if (!await _scanGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            return MeetingDetectionScan.NotFound("A detection scan was already running.", 0);
+        }
+        try
+        {
+            return DetectMeeting(publish);
+        }
+        catch (Exception exception)
+        {
+            _logService.Info($"Meeting detection scan failed. category={exception.GetType().Name}");
+            return MeetingDetectionScan.NotFound("Detection scan failed.", 0);
+        }
+        finally
+        {
+            _scanGate.Release();
+        }
+    }
 
     private MeetingDetectionScan DetectMeeting(bool publish)
     {
@@ -68,7 +126,7 @@ public sealed class MeetingDetectionService : IDisposable
     private MeetingDetectionScan DetectVisibleMeetingWindow(bool publish, string foregroundSummary)
     {
         DetectedMeeting? detected = null;
-        var visibleWindows = new List<string>();
+        var visibleWindowCount = 0;
         EnumWindows((handle, _) =>
         {
             if (!IsWindowVisible(handle) || IsIconic(handle) || handle == IntPtr.Zero)
@@ -76,14 +134,7 @@ public sealed class MeetingDetectionService : IDisposable
                 return true;
             }
 
-            if (visibleWindows.Count < 8)
-            {
-                var description = DescribeWindow(handle);
-                if (!string.IsNullOrWhiteSpace(description))
-                {
-                    visibleWindows.Add(description);
-                }
-            }
+            visibleWindowCount++;
 
             if (TryDetectMeeting(handle, out var meeting))
             {
@@ -96,9 +147,15 @@ public sealed class MeetingDetectionService : IDisposable
 
         if (detected is null)
         {
-            _lastDetectedKey = "";
-            _lastDetectedAt = DateTime.MinValue;
-            return CompleteScan(MeetingDetectionScan.NotFound(foregroundSummary, visibleWindows));
+            var empty = _signals.Capture(MeetingEvidenceStrength.None, null);
+            var decision = _resolver.Observe(empty);
+            if (decision.Action == MeetingCandidateAction.Ended)
+            {
+                _resolver.Forget(decision.Key);
+            }
+            return CompleteScan(MeetingDetectionScan.NotFound(
+                $"{foregroundSummary}. Suppressed: {MeetingCandidateResolver.DescribeSuppression(empty)}",
+                visibleWindowCount));
         }
 
         if (publish)
@@ -130,21 +187,32 @@ public sealed class MeetingDetectionService : IDisposable
         }
 
         var browserUrl = "";
-        var platform = DetectPlatform(title, processName, browserUrl);
-        if (platform is null && IsBrowserProcess(processName))
+        MeetingUrlMatch? urlMatch = null;
+        if (IsBrowserProcess(processName))
         {
             browserUrl = TryGetBrowserUrl(handle, processName) ?? "";
-            platform = DetectPlatform(title, processName, browserUrl);
+            urlMatch = MeetingUrlParser.TryParse(browserUrl);
         }
 
+        var evidence = MeetingEvidenceClassifier.Classify(title, processName, browserUrl);
+        if (evidence == MeetingEvidenceStrength.None)
+        {
+            return false;
+        }
+
+        // A validated join URL names the platform authoritatively; otherwise fall back to the
+        // process/title heuristic, which only ever produces weak evidence.
+        var platform = urlMatch?.Platform ?? DetectPlatform(title, processName, browserUrl);
         if (platform is null)
         {
             return false;
         }
 
-        var meetingTitle = CleanMeetingTitle(title, platform, browserUrl);
-        var key = $"{platform}|{processName}|{meetingTitle}|{browserUrl}".ToLowerInvariant();
-        meeting = new DetectedMeeting(platform, meetingTitle, title, processName, browserUrl, key);
+        var meetingTitle = urlMatch?.DisplayName ?? CleanMeetingTitle(title, platform, browserUrl);
+        var joinUrl = urlMatch?.JoinUrl ?? "";
+        var key = $"{platform}|{processName}|{meetingTitle}|{joinUrl}".ToLowerInvariant();
+        meeting = new DetectedMeeting(
+            platform, meetingTitle, title, processName, joinUrl, key, checked((int)processId), evidence);
         return true;
     }
 
@@ -161,14 +229,21 @@ public sealed class MeetingDetectionService : IDisposable
 
     private void PublishMeeting(DetectedMeeting meeting)
     {
-        if (meeting.Key == _lastDetectedKey &&
-            DateTime.Now - _lastDetectedAt < TimeSpan.FromSeconds(45))
+        // Sensor state corroborates the window evidence; the resolver owns the decision so the
+        // conservative policy and its hysteresis live in one tested place.
+        var snapshot = _signals.Capture(meeting.Evidence, meeting.Key);
+        var decision = _resolver.Observe(snapshot);
+        if (decision.Action == MeetingCandidateAction.Ended)
+        {
+            _resolver.Forget(decision.Key);
+            return;
+        }
+        if (decision.Action != MeetingCandidateAction.Prompt)
         {
             return;
         }
-
-        _lastDetectedKey = meeting.Key;
-        _lastDetectedAt = DateTime.Now;
+        _logService.Info(
+            $"Meeting candidate confirmed. platform={meeting.Platform}; evidence={meeting.Evidence}; mic={snapshot.MicrophoneInUse}; camera={snapshot.CameraInUse}; reason={decision.Reason}");
         MeetingDetected?.Invoke(this, meeting);
     }
 
@@ -285,29 +360,11 @@ public sealed class MeetingDetectionService : IDisposable
                processName.Equals("opera", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool LooksLikeMeetingUrl(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
+    /// <summary>Strict, host-anchored validation; a substring match would accept lookalike domains.</summary>
+    private static bool LooksLikeMeetingUrl(string? value) => MeetingUrlParser.IsSupportedMeetingUrl(value);
 
-        var normalized = value.Trim().ToLowerInvariant();
-        return normalized.Contains("meet.google.com") ||
-               normalized.Contains("zoom.us/j/") ||
-               normalized.Contains("zoom.us/wc/") ||
-               normalized.Contains("teams.microsoft.com") ||
-               normalized.Contains("teams.live.com") ||
-               normalized.Contains("webex.com");
-    }
-
-    private static string NormalizeUrl(string value)
-    {
-        var trimmed = value.Trim();
-        return trimmed.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? trimmed
-            : $"https://{trimmed}";
-    }
+    private static string NormalizeUrl(string value) =>
+        MeetingUrlParser.TryParse(value)?.JoinUrl ?? value.Trim();
 
     private static string GetWindowTitle(IntPtr handle)
     {
@@ -341,9 +398,10 @@ public sealed class MeetingDetectionService : IDisposable
             // Process may exit during enumeration.
         }
 
+        var titleFingerprint = AppLogService.SensitiveTextFingerprint(title);
         var description = string.IsNullOrWhiteSpace(processName)
-            ? title
-            : $"{processName}: {title}";
+            ? $"window title hash {titleFingerprint}"
+            : $"{processName}; title hash {titleFingerprint}";
         return string.IsNullOrWhiteSpace(prefix) ? description : $"{prefix}: {description}";
     }
 
@@ -377,7 +435,9 @@ public sealed record DetectedMeeting(
     string WindowTitle,
     string ProcessName,
     string? BrowserUrl,
-    string Key);
+    string Key,
+    int ProcessId,
+    MeetingEvidenceStrength Evidence = MeetingEvidenceStrength.Weak);
 
 public sealed record MeetingDetectionScan(
     bool Found,
@@ -388,15 +448,15 @@ public sealed record MeetingDetectionScan(
     {
         return new MeetingDetectionScan(
             true,
-            $"Found {meeting.Platform} from {source}: {meeting.ProcessName}: {meeting.WindowTitle}",
+            $"Found {meeting.Platform} from {source}; process={meeting.ProcessName}; titleHash={AppLogService.SensitiveTextFingerprint(meeting.WindowTitle)}",
             meeting);
     }
 
-    public static MeetingDetectionScan NotFound(string foregroundSummary, IReadOnlyList<string> visibleWindows)
+    public static MeetingDetectionScan NotFound(string foregroundSummary, int visibleWindowCount)
     {
-        var windows = visibleWindows.Count == 0
-            ? "No visible windows with titles."
-            : string.Join(" | ", visibleWindows);
-        return new MeetingDetectionScan(false, $"{foregroundSummary}. Visible: {windows}", null);
+        return new MeetingDetectionScan(
+            false,
+            $"{foregroundSummary}. Visible top-level window count: {visibleWindowCount}.",
+            null);
     }
 }
