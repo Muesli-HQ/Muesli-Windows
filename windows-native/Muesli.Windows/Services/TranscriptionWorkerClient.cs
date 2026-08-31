@@ -343,18 +343,6 @@ public sealed record WorkerTranscriptionResult(
     [property: JsonPropertyName("warnings")]
     List<string> Warnings);
 
-public sealed record TranscriptSegment(
-    [property: JsonPropertyName("id")]
-    string Id,
-    [property: JsonPropertyName("speaker")]
-    string Speaker,
-    [property: JsonPropertyName("startMs")]
-    int StartMs,
-    [property: JsonPropertyName("endMs")]
-    int EndMs,
-    [property: JsonPropertyName("text")]
-    string Text);
-
 public sealed record DiarizationRequest(
     string Id,
     string Command,
@@ -363,25 +351,5 @@ public sealed record DiarizationRequest(
 public sealed record DiarizationPayload(
     [property: JsonPropertyName("input_path")]
     string InputPath);
-
-public sealed record DiarizationResult(
-    [property: JsonPropertyName("transcriptText")]
-    string? TranscriptText,
-    [property: JsonPropertyName("detectedLanguage")]
-    string? DetectedLanguage,
-    [property: JsonPropertyName("durationMs")]
-    int DurationMs,
-    [property: JsonPropertyName("segments")]
-    List<DiarizedSegment> Segments,
-    [property: JsonPropertyName("warnings")]
-    List<string> Warnings);
-
-public sealed record DiarizedSegment(
-    [property: JsonPropertyName("speakerId")]
-    string SpeakerId,
-    [property: JsonPropertyName("startMs")]
-    int StartMs,
-    [property: JsonPropertyName("endMs")]
-    int EndMs);
 
 public sealed record PostProcessingResult(string Text, string? Diagnostic = null);
