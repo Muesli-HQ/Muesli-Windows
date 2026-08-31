@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -22,19 +23,31 @@ namespace Muesli.Windows;
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
-    private readonly DictationCoordinator _dictationCoordinator = new();
-    private readonly GlobalHotkeyService _globalHotkeyService = new();
-    private readonly SettingsStore _settingsStore = new();
-    private readonly AppDataStore _dataStore = new();
-    private readonly ToastNotificationService _toastNotificationService = new();
-    private readonly ActiveAppPasteService _activeAppPasteService = new();
-    private readonly TranscriptionWorkerClient _meetingTranscriptionClient = new();
+    private readonly NativeTranscriptionClient _dictationTranscriptionClient;
+    private readonly DictationCoordinator _dictationCoordinator;
+    private readonly GlobalHotkeyService _globalHotkeyService;
+    private readonly SettingsStore _settingsStore;
+    private readonly AppDataStore _dataStore;
+    private readonly ToastNotificationService _toastNotificationService;
+    private readonly ActiveAppPasteService _activeAppPasteService;
+    private readonly NativeTranscriptionClient _meetingTranscriptionClient;
     private readonly MeetingRecordingCoordinator _meetingRecordingCoordinator;
-    private readonly MeetingDetectionService _meetingDetectionService = new();
-    private readonly MeetingPromptService _meetingPromptService = new();
-    private readonly TrayIconService _trayIconService = new();
-    private readonly RuntimeDiagnosticsService _runtimeDiagnosticsService = new();
-    private readonly AppLogService _logService = new();
+    private readonly MeetingRecordingPlaybackService _meetingPlaybackService;
+    private readonly TranscriptionModelLifecycleService _modelLifecycle;
+    private readonly StreamingModelLifecycleService _streamingModelLifecycle;
+    private readonly MeetingDetectionService _meetingDetectionService;
+    private readonly MeetingPromptService _meetingPromptService;
+    private readonly TrayIconService _trayIconService;
+    private readonly OnboardingProgressStore _onboardingProgressStore;
+    private readonly WindowsMicrophoneAccessService _microphoneAccessService;
+    private readonly RuntimeDiagnosticsService _runtimeDiagnosticsService;
+    private readonly PostMeetingAutomationService _postMeetingAutomationService;
+    private readonly AppLogService _logService;
+    private readonly CaptureStorageService _captureStorageService;
+    private readonly TranscriptionBenchmarkService _transcriptionBenchmarkService;
+    private readonly NativeTextCleanupService _textCleanupService;
+    private readonly TranscriptionPipelineService _transcriptionPipelineService;
+    private readonly DictationHotkeyStateMachine _dictationHotkeyState = new();
     private readonly Dictionary<string, DateTime> _ignoredMeetingPrompts = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Threading.DispatcherTimer _meetingAutoStopTimer = new()
     {
@@ -48,41 +61,94 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         Interval = TimeSpan.FromMilliseconds(320)
     };
+    private readonly System.Windows.Threading.DispatcherTimer _meetingPlaybackTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(250)
+    };
+    private readonly SemaphoreSlim _summaryGate = new(1, 1);
 
     private string _dictationStatus = "Ready";
     private string? _selectedMicrophone;
-    private string _selectedAsrEngine = "whisper";
-    private string _selectedModelProfile = "base";
     private string _selectedHotkey = "F8";
     private string _selectedPasteBehavior = "active-app";
+    private TranscriptionModelDefinition _selectedTranscriptionModel = TranscriptionModelCatalog.Models[0];
+    private TranscriptionModelDefinition _selectedFinalMeetingModel = TranscriptionModelCatalog.Models[0];
+    private LiveModelChoice _selectedLiveMeetingModel = LiveModelChoice.Off;
+    private string _selectedLiveTranscriptOwnership = "Preview-only";
+    private bool _showLiveWaveformOnHover;
+    private MeetingLiveTranscriptWindow? _liveTranscriptWindow;
     private string _selectedSummaryProvider = "local";
+    private bool _isSummarizing;
+    private bool _summaryRetryAvailable;
+    private CancellationTokenSource? _summaryCancellation;
+    private string _ollamaEndpoint = "http://localhost:11434";
+    private string _ollamaModel = "llama3.1:8b";
     private string _selectedSummaryTemplate = "standard";
     private string _userName = "";
     private string _openAIApiKey = "";
     private string _openAIModel = "gpt-5.4-mini";
     private string _openRouterApiKey = "";
     private string _openRouterModel = "stepfun/step-3.5-flash:free";
+    private bool _updatingSecretBoxes;
     private string _theme = "dark";
-    private bool _postProcessingEnabled;
     private bool _enableDoubleTapDictation;
-    private string _postProcessingPrompt = "";
+    private bool _removeFillerWords = true;
+    private bool _enableLocalCleanup;
     private bool _startAtLogin;
     private bool _openDashboardOnLaunch = true;
     private bool _saveMeetingRecordings = true;
+    private bool _postMeetingHookEnabled;
+    private string _postMeetingHookExecutablePath = "";
+    private string _selectedHookTranscriptPolicy = "Metadata only";
+    private int _postMeetingHookTimeoutSeconds = 30;
+    private int _postMeetingHookMaxAttempts = 2;
+    private bool _autoExportMarkdownEnabled;
+    private string _autoExportMarkdownDirectory = "";
+    private string _selectedAutoExportContent = "Notes";
+    private string _postMeetingAutomationStatus = "Automation is disabled.";
+    private bool _computerUseEnabled;
+    private string _selectedComputerUsePlannerProvider = "None";
+    private string _computerUsePlannerModel = "";
+    private int _computerUsePlannerTimeoutSeconds = 30;
+    private int _computerUsePerActionTimeoutSeconds = 10;
+    private int _computerUseMaximumActionCount = 5;
+    private string _computerUseAllowedApplications = "";
+    private string _computerUseAllowedBrowserDomains = "";
+    private bool _computerUseIncludeWindowText;
+    private bool _computerUseIncludeScreenshots;
+    private bool _computerUseIncludeBrowserPageText;
+    private string _selectedComputerUseBrowserInterface = "Disabled";
+    private string _computerUseBrowserEndpoint = "http://127.0.0.1:9222";
+    private string _computerUseStatus = "Computer Use is disabled.";
+    private bool _computerUseVoiceCaptureActive;
+    private bool _computerUseIsRunning;
+    private ComputerUseActivationToken? _computerUseActivationToken;
+    private ComputerUsePlannerService? _computerUsePlannerService;
+    private ComputerUseWindowTarget? _computerUseApprovedTarget;
+    private readonly HttpClient _computerUseHttpClient;
+    private readonly ComputerUseTraceStore _computerUseTraceStore;
+    private CancellationTokenSource? _computerUseCancellation;
+    private readonly CancellationTokenSource _applicationShutdownCancellation = new();
     private bool _showFloatingIndicator = true;
     private string _selectedIndicatorPosition = "Top Center";
     private bool _autoMeetingDetectionEnabled = true;
     private bool _onboardingCompleted;
+    private int _lastCompletedFeatureTourVersion;
+    private OnboardingWindow? _onboardingWindow;
+    private MeetingDetectionScan? _lastMeetingDetectionScan;
     private IntPtr _pasteTargetWindow = IntPtr.Zero;
+    private PasteTargetInfo _pasteTargetInfo = PasteTargetInfo.Unknown;
     private bool _shouldPasteToActiveApp;
     private bool _meetingsExpanded = true;
     private bool _meetingSortNewestFirst = true;
     private bool _isCapturingHotkey;
-    private bool _awaitingHandsFreeSecondTap;
-    private bool _isHandsFreeDictationLocked;
+    private CancellationTokenSource? _dictationOperationCancellation;
     private bool _runtimeStarted;
+    private readonly bool _isVisualPreview;
+    private string _previewPageStateMessage = "";
     private bool _isParkedForBackground;
     private bool _isWorkAreaMaximized;
+    private bool _isCompactLayout;
     private Rect _restoreBounds;
     private string _dictationDateFilter = "all";
     private string _meetingDateFilter = "all";
@@ -95,25 +161,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private Dictionary<string, string> _activeSpeakerAliases = new();
     private bool _lastMeetingDetailShowTranscript = false;
     private bool _isMeetingRecording;
-    private int _meetingMissingScanCount;
+    private string _meetingSessionStatus = "Idle";
+    private CancellationTokenSource? _meetingOperationCancellation;
+    private MeetingAutoStopTracker? _meetingAutoStopTracker;
+    private readonly List<RecoverableMeetingSession> _recoverableMeetingSessions = [];
+    private MeetingPlaybackTrack? _selectedMeetingPlaybackTrack;
+    private double _meetingPlaybackPosition;
+    private double _meetingPlaybackDuration;
+    private bool _updatingMeetingPlaybackPosition;
+    private bool _lastSummaryUsedLocalFallback;
     private string? _currentMeetingTitle;
+    private CancellationTokenSource? _importCancellation;
+    private bool _isImportingMeeting;
+    private double _importProgressPercent;
+    private string _importProgressLabel = "";
+    private bool _importProgressIsIndeterminate = true;
     private string _runtimeDiagnostics = "Not checked yet.";
     private string _modelCacheDirectory = "";
     private string _modelCacheSize = "0 B";
+    private string _benchmarkSummary = "Benchmark not run yet.";
     private string _setupReadiness = "Setup not checked yet.";
-    private string _transcriptionWorkerStatus = "Not checked";
-    private string _whisperRuntimeStatus = "Not checked";
-    private string _selectedModelCacheStatus = "Not checked";
+    private string _nativeRuntimeStatus = "Not checked";
     private string _speakerDiarizationStatusLabel = "Not checked";
+    private string _dictationModelRuntimeStatus = "Needs model";
+    private string _qwenCleanupRuntimeStatus = "Disabled";
     private string _gpuRuntimeStatus = "Not checked";
-    private string _qwenRuntimeStatus = "Not checked";
-    private string _parakeetRuntimeStatus = "Not checked";
     private string _diarizationDependencyStatus = "Not checked yet.";
     private string _diarizationTokenStatus = "Not checked yet.";
     private string _meetingDetectionStatus = "Meeting detection has not scanned yet.";
     private string _runtimeSetupStatus = "";
-    private bool _canInstallLocalRuntime;
-    private bool _isInstallingLocalRuntime;
     private double? _indicatorLeft;
     private double? _indicatorTop;
     private bool _crashReportingEnabled;
@@ -126,15 +202,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public bool IsCompactLayout
+    {
+        get => _isCompactLayout;
+        private set
+        {
+            if (!SetField(ref _isCompactLayout, value)) return;
+            UpdateSidebarColumnWidth();
+        }
+    }
+
+    private void UpdateSidebarColumnWidth()
+    {
+        if (SidebarColumn is null) return;
+        SidebarColumn.Width = new GridLength(IsCompactLayout ? 72 : 260);
+    }
+
     public ObservableCollection<DictationItem> Dictations { get; } = [];
     public ObservableCollection<MeetingItem> Meetings { get; } = [];
     public ObservableCollection<MeetingFolderItem> MeetingFolders { get; } = [];
     public ObservableCollection<MeetingTemplateItem> CustomMeetingTemplates { get; } = [];
     public ObservableCollection<DictionaryEntryItem> DictionaryEntries { get; } = [];
-    public ObservableCollection<UpcomingMeetingItem> UpcomingMeetings { get; } = [];
+    public ObservableCollection<TranscriptionModelItem> TranscriptionModelItems { get; } = [];
+    public ObservableCollection<StreamingModelItem> StreamingModelItems { get; } = [];
+    public ObservableCollection<MeetingPlaybackTrack> MeetingPlaybackTracks { get; } = [];
     public ObservableCollection<string> MicrophoneDevices { get; } = ["System default microphone"];
-    public ObservableCollection<string> AsrEngines { get; } = ["whisper", "parakeet-v3"];
-    public ObservableCollection<string> ModelProfiles { get; } = ["tiny", "base", "small", "medium", "large-v3-turbo"];
     public ObservableCollection<string> HotkeyOptions { get; } =
     [
         "F6",
@@ -150,9 +242,44 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         "Ctrl+Alt+D"
     ];
     public ObservableCollection<string> PasteBehaviors { get; } = ["active-app", "clipboard"];
+    public IReadOnlyList<TranscriptionModelDefinition> TranscriptionModels { get; } = TranscriptionModelCatalog.Models;
+    public IReadOnlyList<LiveModelChoice> LiveMeetingModels { get; } =
+        [LiveModelChoice.Off, .. StreamingModelCatalog.Models.Select(model => new LiveModelChoice(model.Id, model.PickerLabel))];
+    public IReadOnlyList<string> LiveTranscriptOwnershipModes { get; } = LiveTranscriptOwnershipDescriptor.DisplayNames;
     public ObservableCollection<string> IndicatorPositions { get; } = ["Top Left", "Top Center", "Top Right", "Bottom Left", "Bottom Center", "Bottom Right", "Custom"];
     public ObservableCollection<string> ThemeOptions { get; } = ["Light", "Dark"];
-    public ObservableCollection<string> SummaryProviders { get; } = ["local", "openai", "openrouter"];
+    public ObservableCollection<string> SummaryProviders { get; } = [.. SummaryProviderDisclosure.AvailableIds];
+    public ObservableCollection<string> HookTranscriptPolicies { get; } = ["Metadata only", "Inline transcript", "Auto-export path"];
+    public ObservableCollection<string> AutoExportContentOptions { get; } = ["Notes", "Transcript", "Full meeting"];
+    public ObservableCollection<string> ComputerUsePlannerProviders { get; } = ["None", "OpenAI"];
+    public ObservableCollection<string> ComputerUseBrowserInterfaces { get; } = ["Disabled", "Loopback DevTools"];
+    /// <summary>Shown next to the provider picker so the user knows before recording whether the transcript leaves the machine.</summary>
+    public string SummaryProviderDisclosureText =>
+        SummaryProviderDisclosure.DisclosureFor(SelectedSummaryProvider, _ollamaEndpoint);
+
+    public string OllamaEndpoint
+    {
+        get => _ollamaEndpoint;
+        set
+        {
+            if (!SetField(ref _ollamaEndpoint, string.IsNullOrWhiteSpace(value) ? "http://localhost:11434" : value.Trim())) return;
+            // Pointing Ollama at a remote host changes whether the transcript leaves the machine.
+            OnPropertyChanged(nameof(SummaryProviderDisclosureText));
+            SaveSettings();
+        }
+    }
+
+    public string OllamaModel
+    {
+        get => _ollamaModel;
+        set
+        {
+            if (SetField(ref _ollamaModel, string.IsNullOrWhiteSpace(value) ? "llama3.1:8b" : value.Trim()))
+            {
+                SaveSettings();
+            }
+        }
+    }
     public ObservableCollection<string> SummaryTemplates { get; } = new(MeetingSummaryService.BuiltInTemplateNames);
     public ICollectionView FilteredDictations { get; }
     public ICollectionView FilteredMeetings { get; }
@@ -216,7 +343,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool HasMeetings => FilteredMeetings?.Cast<MeetingItem>().Any() ?? false;
     public bool HasSearchResults => SearchDictationCount > 0 || SearchMeetingCount > 0;
     public bool HasDictionaryEntries => DictionaryEntries.Count > 0;
-    public bool HasUpcomingMeetings => UpcomingMeetings.Count > 0;
     public string SearchQuery
     {
         get => _searchQuery;
@@ -239,18 +365,210 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
     }
-    public string MeetingRecordingButtonText => _isMeetingRecording ? "Stop recording" : "Record meeting";
-    public string ActiveModelLabel => SelectedAsrEngine == "parakeet-v3" ? "Parakeet v3" : $"Whisper {SelectedModelProfile}";
-    public string WhisperStatusLabel => SelectedAsrEngine == "whisper" ? "Active" : "Downloaded";
-    public string ParakeetStatusLabel => SelectedAsrEngine == "parakeet-v3" ? "Active" : "Optional";
+    public string MeetingRecordingButtonText => _meetingRecordingCoordinator.State switch
+    {
+        MeetingSessionState.Preparing => "Preparing…",
+        MeetingSessionState.Recording or MeetingSessionState.DegradedRecording => "Stop recording",
+        MeetingSessionState.Stopping => "Stopping…",
+        MeetingSessionState.Finalizing => "Finalizing…",
+        _ => "Record meeting"
+    };
+    public string MeetingSessionStatus
+    {
+        get => _meetingSessionStatus;
+        private set => SetField(ref _meetingSessionStatus, value);
+    }
+    public int RecoverableMeetingCount => _recoverableMeetingSessions.Count;
+    public bool HasRecoverableMeetings => RecoverableMeetingCount > 0;
+    public string RecoverInterruptedButtonText => $"Recover interrupted ({RecoverableMeetingCount})";
+    public bool HasMeetingPlayback => MeetingPlaybackTracks.Count > 0;
+    public MeetingPlaybackTrack? SelectedMeetingPlaybackTrack
+    {
+        get => _selectedMeetingPlaybackTrack;
+        set
+        {
+            if (!SetField(ref _selectedMeetingPlaybackTrack, value) || value is null)
+            {
+                return;
+            }
+            try
+            {
+                _meetingPlaybackService.Load(value);
+                MeetingPlaybackPosition = 0;
+                MeetingPlaybackDuration = _meetingPlaybackService.Duration.TotalSeconds;
+                OnPropertyChanged(nameof(MeetingPlaybackButtonText));
+                OnPropertyChanged(nameof(MeetingPlaybackTimeLabel));
+            }
+            catch (Exception exception)
+            {
+                DictationStatus = $"Recording playback failed: {exception.Message}";
+                _toastNotificationService.Show("Playback failed", "The recording could not be opened", ToastState.Error, 3600);
+            }
+        }
+    }
+    public string MeetingPlaybackButtonText =>
+        _meetingPlaybackService.State == MeetingPlaybackState.Playing ? "Pause" : "Play";
+    public double MeetingPlaybackPosition
+    {
+        get => _meetingPlaybackPosition;
+        set => SetField(ref _meetingPlaybackPosition, value);
+    }
+    public double MeetingPlaybackDuration
+    {
+        get => _meetingPlaybackDuration;
+        private set => SetField(ref _meetingPlaybackDuration, value);
+    }
+    public string MeetingPlaybackTimeLabel =>
+        $"{FormatPlaybackTime(TimeSpan.FromSeconds(Math.Max(0, MeetingPlaybackPosition)))} / {FormatPlaybackTime(TimeSpan.FromSeconds(Math.Max(0, MeetingPlaybackDuration)))}";
+    public string ActiveModelLabel => SelectedTranscriptionModel.DisplayName;
+    public string SelectedModelDescription => SelectedTranscriptionModel.Summary;
+    public string SelectedModelLanguages => SelectedTranscriptionModel.Languages;
+    public string SelectedModelDownloadSize => SelectedTranscriptionModel.SizeLabel;
+    public string SelectedModelCacheStatus => _isVisualPreview ? "Preview-only: no model cache inspected." : _modelLifecycle.Snapshot(SelectedTranscriptionModel.Id).StatusText;
+    public TranscriptionModelDefinition SelectedTranscriptionModel
+    {
+        get => _selectedTranscriptionModel;
+        set
+        {
+            var next = TranscriptionModelCatalog.Get(value?.Id);
+            if (!SetField(ref _selectedTranscriptionModel, next))
+            {
+                return;
+            }
+
+            _ = SwitchDictationModelAsync(next.Id);
+            OnPropertyChanged(nameof(ActiveModelLabel));
+            OnPropertyChanged(nameof(SelectedModelDescription));
+            OnPropertyChanged(nameof(SelectedModelLanguages));
+            OnPropertyChanged(nameof(SelectedModelDownloadSize));
+            OnPropertyChanged(nameof(SelectedModelCacheStatus));
+            DictationModelRuntimeStatus = _modelLifecycle.Snapshot(next.Id).StatusText;
+            DictationStatus = TranscriptionModelReadiness.IsVerified(next)
+                ? $"{next.DisplayName} selected"
+                : $"{next.DisplayName} selected — prepare the model before transcription";
+            SaveSettings();
+            _ = RefreshRuntimeDiagnosticsAsync();
+        }
+    }
+    public TranscriptionModelDefinition SelectedFinalMeetingModel
+    {
+        get => _selectedFinalMeetingModel;
+        set
+        {
+            var next = TranscriptionModelCatalog.Get(value?.Id);
+            if (!SetField(ref _selectedFinalMeetingModel, next))
+            {
+                return;
+            }
+
+            _ = SwitchFinalMeetingModelAsync(next.Id);
+            OnPropertyChanged(nameof(FinalMeetingModelStatus));
+            OnPropertyChanged(nameof(FinalTranscriptOwnerLabel));
+            OnPropertyChanged(nameof(GapRecoveryOwnerLabel));
+            SaveSettings();
+            RefreshModelItems();
+        }
+    }
+    public string FinalMeetingModelStatus => _isVisualPreview ? "Preview-only: no model cache inspected." : _modelLifecycle.Snapshot(SelectedFinalMeetingModel.Id).StatusText;
+    public LiveModelChoice SelectedLiveMeetingModel
+    {
+        get => _selectedLiveMeetingModel;
+        set
+        {
+            var next = LiveMeetingModels.FirstOrDefault(choice => choice.Id == value?.Id) ?? LiveModelChoice.Off;
+            if (!SetField(ref _selectedLiveMeetingModel, next)) return;
+            OnPropertyChanged(nameof(LiveMeetingModelStatus));
+            OnPropertyChanged(nameof(LivePreviewOwnerLabel));
+            OnPropertyChanged(nameof(FinalTranscriptOwnerLabel));
+            OnPropertyChanged(nameof(GapRecoveryOwnerLabel));
+            SaveSettings();
+            RefreshStreamingModelItems();
+        }
+    }
+    public string SelectedLiveTranscriptOwnership
+    {
+        get => _selectedLiveTranscriptOwnership;
+        set
+        {
+            var next = LiveTranscriptOwnershipModes.Contains(value) ? value : LiveTranscriptOwnershipDescriptor.PreviewOnlyDisplayName;
+            if (!SetField(ref _selectedLiveTranscriptOwnership, next)) return;
+            OnPropertyChanged(nameof(LivePreviewOwnerLabel));
+            OnPropertyChanged(nameof(FinalTranscriptOwnerLabel));
+            OnPropertyChanged(nameof(GapRecoveryOwnerLabel));
+            SaveSettings();
+        }
+    }
+    public bool ShowLiveWaveformOnHover
+    {
+        get => _showLiveWaveformOnHover;
+        set { if (SetField(ref _showLiveWaveformOnHover, value)) SaveSettings(); }
+    }
+    private LiveTranscriptOwnershipMode SelectedOwnershipMode =>
+        LiveTranscriptOwnershipDescriptor.ModeFromDisplayName(SelectedLiveTranscriptOwnership);
+    private LiveTranscriptOwnershipDescriptor OwnershipDescriptor => LiveTranscriptOwnershipDescriptor.Create(
+        SelectedLiveMeetingModel.Id,
+        SelectedLiveMeetingModel.Label,
+        SelectedOwnershipMode,
+        SelectedFinalMeetingModel.DisplayName);
+    public string LiveMeetingModelStatus => SelectedLiveMeetingModel.Id is null
+        ? "Off by default · select a verified live model explicitly"
+        : _streamingModelLifecycle.Snapshot(SelectedLiveMeetingModel.Id).StatusText;
+    public string LivePreviewOwnerLabel => OwnershipDescriptor.LivePreviewOwner;
+    public string FinalTranscriptOwnerLabel => OwnershipDescriptor.FinalTranscriptOwner;
+    public string GapRecoveryOwnerLabel => OwnershipDescriptor.GapRecoveryOwner;
+    public string DictationModelStatusLabel => DictationModelRuntimeStatus;
+    public string QwenCleanupStatusLabel => QwenCleanupRuntimeStatus;
     public string ShortcutModeLabel => EnableDoubleTapDictation ? "Hold to talk, or double-tap to lock recording" : "Hold to record, release to transcribe";
+    public bool SetupNeedsResume => _isVisualPreview || !_onboardingCompleted || _onboardingProgressStore.Load().Deferred;
+    public string SetupResumeLabel => SetupNeedsResume ? "Setup is paused or incomplete" : "Setup complete";
+    public string StartupRegistrationLabel => _isVisualPreview ? "Preview-only: startup registration was not inspected." : StartupRegistrationService.DescribeState();
+    public string PreviewPageStateMessage => _previewPageStateMessage;
     public string CaptureHotkeyButtonText => _isCapturingHotkey ? "Press shortcut..." : "Record shortcut";
     public string ShortcutCaptureLabel => _isCapturingHotkey
         ? "Press a function key or a modifier shortcut such as Ctrl+Shift+Space. Press Esc to cancel."
         : "Choose a shortcut or record one that is free on this Windows laptop.";
     public string AppVersion => $"v{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.2.0"}";
-    public string SelectedMeetingTitle => _selectedMeeting?.Title ?? "";
+    public string SelectedMeetingTitle
+    {
+        get => _selectedMeeting?.Title ?? "";
+        set
+        {
+            if (_selectedMeeting is null || !MeetingTitleService.IsAcceptableManualTitle(value)) return;
+            if (string.Equals(_selectedMeeting.Title, value.Trim(), StringComparison.Ordinal)) return;
+            // Editing the title claims it: regeneration must never overwrite it afterwards.
+            UpdateSelectedMeeting(meeting => meeting with { Title = value.Trim(), TitleIsManual = true });
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedMeetingTitleOwnership));
+        }
+    }
+    public string SelectedMeetingTitleOwnership => _selectedMeeting?.TitleIsManual == true
+        ? "Your title · kept when notes are regenerated"
+        : "Generated title · replaced when notes are regenerated";
+    public string SelectedMeetingManualNotes
+    {
+        get => _selectedMeeting?.ManualNotes ?? "";
+        set
+        {
+            if (_selectedMeeting is null) return;
+            var trimmed = value?.Trim() ?? "";
+            if (string.Equals(_selectedMeeting.ManualNotes, trimmed, StringComparison.Ordinal)) return;
+            UpdateSelectedMeeting(meeting => meeting with { ManualNotes = trimmed });
+            OnPropertyChanged();
+        }
+    }
     public string SelectedMeetingMetadata => _selectedMeeting?.Metadata ?? "";
+
+    /// <summary>Applies an edit to the selected meeting and persists it, keeping list and detail in step.</summary>
+    private void UpdateSelectedMeeting(Func<MeetingItem, MeetingItem> edit)
+    {
+        if (_selectedMeeting is null) return;
+        var index = Meetings.IndexOf(_selectedMeeting);
+        var updated = edit(_selectedMeeting);
+        if (index >= 0) Meetings[index] = updated;
+        _selectedMeeting = updated;
+        SaveMeetings();
+        RefreshSearchResults();
+    }
     public string SelectedMeetingNotes => string.IsNullOrWhiteSpace(_selectedMeeting?.Summary)
         ? ""
         : ApplySpeakerAliasesToNotes(_selectedMeeting.Summary, _activeSpeakerAliases);
@@ -267,46 +585,127 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
     public string SelectedMeetingNotesActionLabel => string.IsNullOrWhiteSpace(_selectedMeeting?.Summary) ? "Generate Notes" : "Regenerate Notes";
+
+    /// <summary>True while a notes request is running, which drives the progress and Cancel affordances.</summary>
+    public bool IsSummarizing
+    {
+        get => _isSummarizing;
+        private set
+        {
+            if (!SetField(ref _isSummarizing, value)) return;
+            OnPropertyChanged(nameof(IsNotSummarizing));
+            OnPropertyChanged(nameof(CanRetrySummary));
+        }
+    }
+    public bool IsNotSummarizing => !_isSummarizing;
+    public bool CanRetrySummary => _summaryRetryAvailable && !_isSummarizing;
+
+    private void CancelSummary_Click(object sender, RoutedEventArgs e)
+    {
+        _summaryCancellation?.Cancel();
+        DictationStatus = "Cancelling notes generation…";
+    }
+
+    /// <summary>True while a media import is running, which drives the progress and Cancel affordances.</summary>
+    public bool IsImportingMeeting
+    {
+        get => _isImportingMeeting;
+        private set
+        {
+            if (!SetField(ref _isImportingMeeting, value)) return;
+            OnPropertyChanged(nameof(IsNotImportingMeeting));
+        }
+    }
+    public bool IsNotImportingMeeting => !_isImportingMeeting;
+
+    /// <summary>Overall import completion, 0-100, across decode, transcription, cleanup and notes.</summary>
+    public double ImportProgressPercent
+    {
+        get => _importProgressPercent;
+        private set => SetField(ref _importProgressPercent, value);
+    }
+
+    public string ImportProgressLabel
+    {
+        get => _importProgressLabel;
+        private set => SetField(ref _importProgressLabel, value);
+    }
+
+    /// <summary>
+    /// True for stages that report no fraction. Parakeet decodes a whole file in one native call,
+    /// so the bar must say "working" rather than invent a percentage that never moves.
+    /// </summary>
+    public bool ImportProgressIsIndeterminate
+    {
+        get => _importProgressIsIndeterminate;
+        private set => SetField(ref _importProgressIsIndeterminate, value);
+    }
+
+    private void CancelImport_Click(object sender, RoutedEventArgs e)
+    {
+        _importCancellation?.Cancel();
+        DictationStatus = "Cancelling import…";
+        ApplyImportProgress(MeetingImportProgressMapper.Cancelling(ImportProgressPercent));
+    }
+
+    private void ReportImportProgress(MeetingImportStage stage, double? fraction) =>
+        ApplyImportProgress(MeetingImportProgressMapper.Map(stage, fraction));
+
+    private void ApplyImportProgress(MeetingImportProgress progress)
+    {
+        ImportProgressLabel = progress.Label;
+        ImportProgressPercent = progress.Percent;
+        ImportProgressIsIndeterminate = progress.IsIndeterminate;
+    }
+
+    private async void RetrySummary_Click(object sender, RoutedEventArgs e)
+    {
+        _summaryRetryAvailable = false;
+        OnPropertyChanged(nameof(CanRetrySummary));
+        await GenerateSelectedMeetingNotesAsync();
+    }
     public string SelectedMeetingTranscript => ApplySpeakerAliases(_selectedMeeting?.Transcript ?? "", _activeSpeakerAliases);
     public string RuntimeDiagnostics
     {
         get => _runtimeDiagnostics;
         private set => SetField(ref _runtimeDiagnostics, value);
     }
-    public string TranscriptionWorkerStatus
+    public string NativeRuntimeStatus
     {
-        get => _transcriptionWorkerStatus;
-        private set => SetField(ref _transcriptionWorkerStatus, value);
-    }
-    public string WhisperRuntimeStatus
-    {
-        get => _whisperRuntimeStatus;
-        private set => SetField(ref _whisperRuntimeStatus, value);
-    }
-    public string SelectedModelCacheStatus
-    {
-        get => _selectedModelCacheStatus;
-        private set => SetField(ref _selectedModelCacheStatus, value);
+        get => _nativeRuntimeStatus;
+        private set => SetField(ref _nativeRuntimeStatus, value);
     }
     public string SpeakerDiarizationStatusLabel
     {
         get => _speakerDiarizationStatusLabel;
         private set => SetField(ref _speakerDiarizationStatusLabel, value);
     }
+    public string DictationModelRuntimeStatus
+    {
+        get => _dictationModelRuntimeStatus;
+        private set
+        {
+            if (SetField(ref _dictationModelRuntimeStatus, value))
+            {
+                OnPropertyChanged(nameof(DictationModelStatusLabel));
+            }
+        }
+    }
+    public string QwenCleanupRuntimeStatus
+    {
+        get => _qwenCleanupRuntimeStatus;
+        private set
+        {
+            if (SetField(ref _qwenCleanupRuntimeStatus, value))
+            {
+                OnPropertyChanged(nameof(QwenCleanupStatusLabel));
+            }
+        }
+    }
     public string GpuRuntimeStatus
     {
         get => _gpuRuntimeStatus;
         private set => SetField(ref _gpuRuntimeStatus, value);
-    }
-    public string QwenRuntimeStatus
-    {
-        get => _qwenRuntimeStatus;
-        private set => SetField(ref _qwenRuntimeStatus, value);
-    }
-    public string ParakeetRuntimeStatus
-    {
-        get => _parakeetRuntimeStatus;
-        private set => SetField(ref _parakeetRuntimeStatus, value);
     }
     public string ModelCacheDirectory
     {
@@ -318,15 +717,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         get => _runtimeSetupStatus;
         private set => SetField(ref _runtimeSetupStatus, value);
     }
-    public bool CanInstallLocalRuntime
-    {
-        get => _canInstallLocalRuntime;
-        private set => SetField(ref _canInstallLocalRuntime, value);
-    }
     public string ModelCacheSize
     {
         get => _modelCacheSize;
         private set => SetField(ref _modelCacheSize, value);
+    }
+    public string BenchmarkSummary
+    {
+        get => _benchmarkSummary;
+        private set => SetField(ref _benchmarkSummary, value);
     }
     public string DiarizationDependencyStatus
     {
@@ -379,40 +778,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public string SelectedModelProfile
-    {
-        get => _selectedModelProfile;
-        set
-        {
-            if (SetField(ref _selectedModelProfile, value))
-            {
-                SaveSettings();
-                OnPropertyChanged(nameof(ActiveModelLabel));
-            }
-        }
-    }
-
-    public string SelectedAsrEngine
-    {
-        get => _selectedAsrEngine;
-        set
-        {
-            if (SetField(ref _selectedAsrEngine, AsrEngines.Contains(value) ? value : "whisper"))
-            {
-                SaveSettings();
-                OnPropertyChanged(nameof(ActiveModelLabel));
-                OnPropertyChanged(nameof(WhisperStatusLabel));
-                OnPropertyChanged(nameof(ParakeetStatusLabel));
-            }
-        }
-    }
-
     public string SelectedHotkey
     {
         get => _selectedHotkey;
         set
         {
             var nextHotkey = NormalizeHotkey(value, allowCustom: true);
+            if (_isVisualPreview)
+            {
+                if (SetField(ref _selectedHotkey, nextHotkey))
+                    DictationStatus = "Preview-only: shortcut changes are disabled; no hook was registered.";
+                return;
+            }
             var previousHotkey = _selectedHotkey;
             if (!SetField(ref _selectedHotkey, nextHotkey))
             {
@@ -449,18 +826,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public bool PostProcessingEnabled
-    {
-        get => _postProcessingEnabled;
-        set
-        {
-            if (SetField(ref _postProcessingEnabled, value))
-            {
-                SaveSettings();
-            }
-        }
-    }
-
     public bool EnableDoubleTapDictation
     {
         get => _enableDoubleTapDictation;
@@ -478,14 +843,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public string PostProcessingPrompt
+    public bool RemoveFillerWords
     {
-        get => _postProcessingPrompt;
+        get => _removeFillerWords;
         set
         {
-            if (SetField(ref _postProcessingPrompt, value ?? ""))
+            if (SetField(ref _removeFillerWords, value))
             {
                 SaveSettings();
+            }
+        }
+    }
+
+    public bool EnableLocalCleanup
+    {
+        get => _enableLocalCleanup;
+        set
+        {
+            if (SetField(ref _enableLocalCleanup, value))
+            {
+                SaveSettings();
+                QwenCleanupRuntimeStatus = NativeTextCleanupService.Status(_enableLocalCleanup);
+                OnPropertyChanged(nameof(QwenCleanupStatusLabel));
+                _ = RefreshRuntimeDiagnosticsAsync();
             }
         }
     }
@@ -497,6 +877,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (!SetField(ref _startAtLogin, value))
             {
+                return;
+            }
+
+            if (_isVisualPreview)
+            {
+                DictationStatus = "Preview-only: startup registration is disabled; no registry state was changed.";
                 return;
             }
 
@@ -523,6 +909,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SetField(ref _selectedSummaryProvider, value))
             {
+                OnPropertyChanged(nameof(SummaryProviderDisclosureText));
                 SaveSettings();
             }
         }
@@ -565,6 +952,239 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public bool PostMeetingHookEnabled
+    {
+        get => _postMeetingHookEnabled;
+        set
+        {
+            if (value && !IsValidHookExecutable(PostMeetingHookExecutablePath))
+            {
+                PostMeetingAutomationStatusText = "Choose an existing .exe before enabling the hook.";
+                value = false;
+            }
+            if (SetField(ref _postMeetingHookEnabled, value))
+            {
+                SaveSettings();
+            }
+        }
+    }
+
+    public string PostMeetingHookExecutablePath
+    {
+        get => _postMeetingHookExecutablePath;
+        set
+        {
+            var normalized = value?.Trim() ?? "";
+            if (!SetField(ref _postMeetingHookExecutablePath, normalized)) return;
+            if (_postMeetingHookEnabled && !IsValidHookExecutable(normalized))
+            {
+                _postMeetingHookEnabled = false;
+                OnPropertyChanged(nameof(PostMeetingHookEnabled));
+                PostMeetingAutomationStatusText = "The hook was disabled because its executable is unavailable.";
+            }
+            SaveSettings();
+        }
+    }
+
+    public string SelectedHookTranscriptPolicy
+    {
+        get => _selectedHookTranscriptPolicy;
+        set
+        {
+            var normalized = HookTranscriptPolicies.Contains(value) ? value : "Metadata only";
+            if (SetField(ref _selectedHookTranscriptPolicy, normalized)) SaveSettings();
+        }
+    }
+
+    public int PostMeetingHookTimeoutSeconds
+    {
+        get => _postMeetingHookTimeoutSeconds;
+        set
+        {
+            if (SetField(ref _postMeetingHookTimeoutSeconds, Math.Clamp(value, 1, 600))) SaveSettings();
+        }
+    }
+
+    public int PostMeetingHookMaxAttempts
+    {
+        get => _postMeetingHookMaxAttempts;
+        set
+        {
+            if (SetField(ref _postMeetingHookMaxAttempts, Math.Clamp(value, 1, 3))) SaveSettings();
+        }
+    }
+
+    public bool AutoExportMarkdownEnabled
+    {
+        get => _autoExportMarkdownEnabled;
+        set
+        {
+            if (value && !IsValidAutoExportDirectory(AutoExportMarkdownDirectory))
+            {
+                PostMeetingAutomationStatusText = "Choose an absolute export folder before enabling automatic Markdown export.";
+                value = false;
+            }
+            if (SetField(ref _autoExportMarkdownEnabled, value)) SaveSettings();
+        }
+    }
+
+    public string AutoExportMarkdownDirectory
+    {
+        get => _autoExportMarkdownDirectory;
+        set
+        {
+            var normalized = value?.Trim() ?? "";
+            if (!SetField(ref _autoExportMarkdownDirectory, normalized)) return;
+            if (_autoExportMarkdownEnabled && !IsValidAutoExportDirectory(normalized))
+            {
+                _autoExportMarkdownEnabled = false;
+                OnPropertyChanged(nameof(AutoExportMarkdownEnabled));
+                PostMeetingAutomationStatusText = "Automatic Markdown export was disabled because its destination is invalid.";
+            }
+            SaveSettings();
+        }
+    }
+
+    public string SelectedAutoExportContent
+    {
+        get => _selectedAutoExportContent;
+        set
+        {
+            var normalized = AutoExportContentOptions.Contains(value) ? value : "Notes";
+            if (SetField(ref _selectedAutoExportContent, normalized)) SaveSettings();
+        }
+    }
+
+    public string PostMeetingAutomationStatusText
+    {
+        get => _postMeetingAutomationStatus;
+        private set => SetField(ref _postMeetingAutomationStatus, value);
+    }
+
+    public bool ComputerUseEnabled
+    {
+        get => _computerUseEnabled;
+        set
+        {
+            if (value && !ComputerUseConfigurationIsReady(out var error))
+            {
+                ComputerUseStatusText = error;
+                value = false;
+            }
+            if (SetField(ref _computerUseEnabled, value))
+            {
+                ComputerUseStatusText = value
+                    ? "Computer Use is enabled for explicit planner voice sessions only."
+                    : "Computer Use is disabled.";
+                SaveSettings();
+            }
+        }
+    }
+
+    public string SelectedComputerUsePlannerProvider
+    {
+        get => _selectedComputerUsePlannerProvider;
+        set
+        {
+            var normalized = ComputerUsePlannerProviders.Contains(value) ? value : "None";
+            if (!SetField(ref _selectedComputerUsePlannerProvider, normalized)) return;
+            DisableComputerUseIfConfigurationBecameInvalid();
+            SaveSettings();
+        }
+    }
+
+    public string ComputerUsePlannerModel
+    {
+        get => _computerUsePlannerModel;
+        set
+        {
+            if (!SetField(ref _computerUsePlannerModel, value?.Trim() ?? "")) return;
+            DisableComputerUseIfConfigurationBecameInvalid();
+            SaveSettings();
+        }
+    }
+
+    public int ComputerUsePlannerTimeoutSeconds
+    {
+        get => _computerUsePlannerTimeoutSeconds;
+        set { if (SetField(ref _computerUsePlannerTimeoutSeconds, Math.Clamp(value, 5, 120))) SaveSettings(); }
+    }
+
+    public int ComputerUsePerActionTimeoutSeconds
+    {
+        get => _computerUsePerActionTimeoutSeconds;
+        set { if (SetField(ref _computerUsePerActionTimeoutSeconds, Math.Clamp(value, 1, 30))) SaveSettings(); }
+    }
+
+    public int ComputerUseMaximumActionCount
+    {
+        get => _computerUseMaximumActionCount;
+        set { if (SetField(ref _computerUseMaximumActionCount, Math.Clamp(value, 1, 20))) SaveSettings(); }
+    }
+
+    public string ComputerUseAllowedApplications
+    {
+        get => _computerUseAllowedApplications;
+        set
+        {
+            if (!SetField(ref _computerUseAllowedApplications, NormalizeAllowlistText(value))) return;
+            DisableComputerUseIfConfigurationBecameInvalid();
+            SaveSettings();
+        }
+    }
+
+    public string ComputerUseAllowedBrowserDomains
+    {
+        get => _computerUseAllowedBrowserDomains;
+        set { if (SetField(ref _computerUseAllowedBrowserDomains, NormalizeAllowlistText(value))) SaveSettings(); }
+    }
+
+    public bool ComputerUseIncludeWindowText
+    {
+        get => _computerUseIncludeWindowText;
+        set { if (SetField(ref _computerUseIncludeWindowText, value)) SaveSettings(); }
+    }
+
+    public bool ComputerUseIncludeScreenshots
+    {
+        get => _computerUseIncludeScreenshots;
+        set { if (SetField(ref _computerUseIncludeScreenshots, value)) SaveSettings(); }
+    }
+
+    public bool ComputerUseIncludeBrowserPageText
+    {
+        get => _computerUseIncludeBrowserPageText;
+        set { if (SetField(ref _computerUseIncludeBrowserPageText, value)) SaveSettings(); }
+    }
+
+    public string SelectedComputerUseBrowserInterface
+    {
+        get => _selectedComputerUseBrowserInterface;
+        set
+        {
+            var normalized = ComputerUseBrowserInterfaces.Contains(value) ? value : "Disabled";
+            if (SetField(ref _selectedComputerUseBrowserInterface, normalized)) SaveSettings();
+        }
+    }
+
+    public string ComputerUseBrowserEndpoint
+    {
+        get => _computerUseBrowserEndpoint;
+        set { if (SetField(ref _computerUseBrowserEndpoint, value?.Trim() ?? "")) SaveSettings(); }
+    }
+
+    public string ComputerUseStatusText
+    {
+        get => _computerUseStatus;
+        private set => SetField(ref _computerUseStatus, value);
+    }
+
+    public string ComputerUseVoiceButtonText => _computerUseVoiceCaptureActive
+        ? "Stop listening and plan"
+        : "Speak planner command";
+
+    public bool ComputerUseStopEnabled => _computerUseVoiceCaptureActive || _computerUseIsRunning;
+
     public bool ShowFloatingIndicator
     {
         get => _showFloatingIndicator;
@@ -602,14 +1222,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string OpenAIApiKey
     {
         get => _openAIApiKey;
-        set
-        {
-            if (SetField(ref _openAIApiKey, value))
-            {
-                SaveSettings();
-            }
-        }
     }
+
+    public string OpenAIApiKeyStatus => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENAI_API_KEY"))
+        ? "Configured via environment"
+        : string.IsNullOrWhiteSpace(_openAIApiKey) ? "Not configured" : "Configured securely";
 
     public string OpenAIModel
     {
@@ -626,14 +1243,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string OpenRouterApiKey
     {
         get => _openRouterApiKey;
-        set
-        {
-            if (SetField(ref _openRouterApiKey, value))
-            {
-                SaveSettings();
-            }
-        }
     }
+
+    public string OpenRouterApiKeyStatus => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENROUTER_API_KEY"))
+        ? "Configured via environment"
+        : string.IsNullOrWhiteSpace(_openRouterApiKey) ? "Not configured" : "Configured securely";
 
     public string OpenRouterModel
     {
@@ -668,12 +1282,66 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public static Window CreateVisualPreview(Phase12PreviewMode mode) => new MainWindow();
-
     public MainWindow()
     {
-        _meetingRecordingCoordinator = new(_logService);
+        _globalHotkeyService = new GlobalHotkeyService();
+        _settingsStore = new SettingsStore();
+        _dataStore = new AppDataStore();
+        _toastNotificationService = new ToastNotificationService();
+        _activeAppPasteService = new ActiveAppPasteService();
+        _meetingTranscriptionClient = new NativeTranscriptionClient();
+        _meetingPlaybackService = new MeetingRecordingPlaybackService();
+        _meetingDetectionService = new MeetingDetectionService();
+        _meetingPromptService = new MeetingPromptService();
+        _trayIconService = new TrayIconService();
+        _onboardingProgressStore = new OnboardingProgressStore();
+        _microphoneAccessService = new WindowsMicrophoneAccessService();
+        _runtimeDiagnosticsService = new RuntimeDiagnosticsService();
+        _postMeetingAutomationService = new PostMeetingAutomationService();
+        _logService = new AppLogService();
+        _captureStorageService = new CaptureStorageService();
+        _computerUseHttpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _computerUseTraceStore = new ComputerUseTraceStore();
+        _dictationTranscriptionClient = new NativeTranscriptionClient();
+        _dictationCoordinator = new DictationCoordinator(_dictationTranscriptionClient);
+        if (_dictationCoordinator.StartupCaptureCleanup.DeletedCount > 0)
+        {
+            _logService.Info($"Removed interrupted dictation temporary audio at startup. count={_dictationCoordinator.StartupCaptureCleanup.DeletedCount}");
+        }
+        if (_dictationCoordinator.StartupCaptureCleanup.FailedPaths.Count > 0)
+        {
+            _logService.Info($"Interrupted dictation temporary audio needs cleanup. failedCount={_dictationCoordinator.StartupCaptureCleanup.FailedPaths.Count}; pathsLogged=false");
+        }
+        _meetingRecordingCoordinator = new(_meetingTranscriptionClient, _logService);
+        _meetingRecordingCoordinator.StateChanged += OnMeetingSessionStateChanged;
+        _meetingRecordingCoordinator.HealthChanged += OnMeetingAudioHealthChanged;
+        _meetingRecordingCoordinator.LevelChanged += OnMeetingRecordingLevelChanged;
+        _meetingRecordingCoordinator.LiveTranscriptChanged += OnLiveTranscriptChanged;
+        _meetingRecordingCoordinator.LiveTranscriptionFailed += OnLiveTranscriptionFailed;
+        _meetingPlaybackService.StateChanged += OnMeetingPlaybackStateChanged;
+        _modelLifecycle = new TranscriptionModelLifecycleService(
+            () => new HashSet<string>(
+                [SelectedTranscriptionModel.Id, SelectedFinalMeetingModel.Id],
+                StringComparer.OrdinalIgnoreCase),
+            ReleaseTranscriptionModelAsync);
+        _modelLifecycle.ModelChanged += OnTranscriptionModelChanged;
+        _streamingModelLifecycle = new StreamingModelLifecycleService(
+            () => SelectedLiveMeetingModel.Id,
+            _ => Task.CompletedTask);
+        _streamingModelLifecycle.ModelChanged += OnStreamingModelChanged;
+        foreach (var model in TranscriptionModels)
+        {
+            TranscriptionModelItems.Add(new TranscriptionModelItem(_modelLifecycle.Snapshot(model.Id)));
+        }
+        foreach (var model in StreamingModelCatalog.Models)
+        {
+            StreamingModelItems.Add(new StreamingModelItem(_streamingModelLifecycle.Snapshot(model.Id)));
+        }
+        _transcriptionBenchmarkService = new(_logService);
+        _textCleanupService = new(_logService);
+        _transcriptionPipelineService = new(_textCleanupService, _logService);
         InitializeComponent();
+        IsCompactLayout = ActualWidth < 900;
         FilteredDictations = CollectionViewSource.GetDefaultView(Dictations);
         FilteredDictations.Filter = item => PassesDateFilter(item, _dictationDateFilter) && PassesSearch(item);
         if (FilteredDictations is ListCollectionView dictationView)
@@ -690,11 +1358,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SearchMeetingResults = new ListCollectionView(Meetings);
         SearchMeetingResults.Filter = item => PassesSearch(item) && !string.IsNullOrWhiteSpace(_searchQuery);
         DataContext = this;
-        UpcomingMeetings.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasUpcomingMeetings));
         _hotkeyReleaseTimer.Tick += HotkeyReleaseTimer_Tick;
 
         var settings = _settingsStore.Load();
         LoadPersistedData();
+        var persistenceWarning = _dataStore.LastWarning ?? _settingsStore.LastWarning;
+        if (!string.IsNullOrWhiteSpace(persistenceWarning))
+        {
+            _dictationStatus = persistenceWarning;
+            _logService.Info($"Persistence recovery notice: {persistenceWarning}");
+        }
         foreach (var microphone in _dictationCoordinator.ListMicrophones())
         {
             if (!MicrophoneDevices.Contains(microphone))
@@ -702,27 +1375,73 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 MicrophoneDevices.Add(microphone);
             }
         }
-        _selectedMicrophone = settings.MicrophoneName ?? _dictationCoordinator.PickPreferredMicrophone();
-        _selectedAsrEngine = AsrEngines.Contains(settings.AsrEngine) ? settings.AsrEngine : "whisper";
-        _selectedModelProfile = ModelProfiles.Contains(settings.ModelProfile) ? settings.ModelProfile : "base";
+        var savedMicrophone = settings.MicrophoneName;
+        _selectedMicrophone = ShouldUseSavedMicrophone(savedMicrophone) && savedMicrophone is not null && MicrophoneDevices.Contains(savedMicrophone)
+            ? savedMicrophone
+            : _dictationCoordinator.PickPreferredMicrophone();
         _selectedHotkey = NormalizeHotkey(settings.Hotkey, allowCustom: true);
         AddHotkeyOptionIfMissing(_selectedHotkey);
         _selectedPasteBehavior = PasteBehaviors.Contains(settings.PasteBehavior) ? settings.PasteBehavior : "active-app";
+        _selectedTranscriptionModel = TranscriptionModelCatalog.Get(settings.DictationModelId);
+        _selectedFinalMeetingModel = TranscriptionModelCatalog.Get(settings.FinalMeetingModelId);
+        _selectedLiveMeetingModel = LiveMeetingModels.FirstOrDefault(choice => choice.Id == settings.LiveMeetingModelId) ?? LiveModelChoice.Off;
+        _selectedLiveTranscriptOwnership = LiveTranscriptOwnershipDescriptor.DisplayNameFor(
+            LiveTranscriptOwnershipDescriptor.ModeFromSettingValue(settings.LiveTranscriptOwnership));
+        _showLiveWaveformOnHover = settings.ShowLiveWaveformOnHover;
+        _dictationTranscriptionClient.SwitchModelAsync(_selectedTranscriptionModel.Id).GetAwaiter().GetResult();
+        _meetingTranscriptionClient.SwitchModelAsync(_selectedFinalMeetingModel.Id).GetAwaiter().GetResult();
         _userName = string.IsNullOrWhiteSpace(settings.UserName) ? Environment.UserName.Trim() : settings.UserName.Trim();
         _onboardingCompleted = settings.OnboardingCompleted;
+        _lastCompletedFeatureTourVersion = settings.LastCompletedFeatureTourVersion;
         _selectedSummaryProvider = SummaryProviders.Contains(settings.MeetingSummaryProvider) ? settings.MeetingSummaryProvider : "local";
+        _ollamaEndpoint = settings.OllamaEndpoint;
+        _ollamaModel = settings.OllamaModel;
         _selectedSummaryTemplate = NormalizeSummaryTemplateName(settings.MeetingSummaryTemplate);
-        _openAIApiKey = settings.OpenAIApiKey;
+        _openAIApiKey = settings.ResolvedOpenAIApiKey;
         _openAIModel = string.IsNullOrWhiteSpace(settings.OpenAIModel) ? "gpt-5.4-mini" : settings.OpenAIModel;
-        _openRouterApiKey = settings.OpenRouterApiKey;
+        _openRouterApiKey = settings.ResolvedOpenRouterApiKey;
         _openRouterModel = string.IsNullOrWhiteSpace(settings.OpenRouterModel) ? "stepfun/step-3.5-flash:free" : settings.OpenRouterModel;
         _theme = settings.Theme.Equals("light", StringComparison.OrdinalIgnoreCase) ? "light" : "dark";
-        _postProcessingEnabled = settings.PostProcessingEnabled;
         _enableDoubleTapDictation = settings.EnableDoubleTapDictation;
-        _postProcessingPrompt = settings.PostProcessingPrompt;
+        _removeFillerWords = settings.RemoveFillerWords;
+        _enableLocalCleanup = settings.EnableLocalCleanup;
+        _qwenCleanupRuntimeStatus = NativeTextCleanupService.Status(_enableLocalCleanup);
         _startAtLogin = settings.StartAtLogin && StartupRegistrationService.IsEnabled();
         _openDashboardOnLaunch = settings.OpenDashboardOnLaunch;
         _saveMeetingRecordings = settings.SaveMeetingRecordings;
+        _postMeetingHookExecutablePath = settings.PostMeetingHookExecutablePath;
+        _selectedHookTranscriptPolicy = HookTranscriptPolicyDisplay(settings.PostMeetingHookTranscriptPolicy);
+        _postMeetingHookTimeoutSeconds = settings.PostMeetingHookTimeoutSeconds;
+        _postMeetingHookMaxAttempts = settings.PostMeetingHookMaxAttempts;
+        _postMeetingHookEnabled = settings.PostMeetingHookEnabled && IsValidHookExecutable(_postMeetingHookExecutablePath);
+        _autoExportMarkdownDirectory = settings.AutoExportMarkdownDirectory;
+        _selectedAutoExportContent = AutoExportContentDisplay(settings.AutoExportMarkdownContent);
+        _autoExportMarkdownEnabled = settings.AutoExportMarkdownEnabled && IsValidAutoExportDirectory(_autoExportMarkdownDirectory);
+        _postMeetingAutomationStatus = settings.PostMeetingHookEnabled && !_postMeetingHookEnabled
+            ? "The saved hook was disabled because its executable is unavailable."
+            : settings.AutoExportMarkdownEnabled && !_autoExportMarkdownEnabled
+                ? "Automatic Markdown export was disabled because its saved destination is invalid."
+                : _postMeetingHookEnabled || _autoExportMarkdownEnabled
+                    ? "Automation is ready and runs only after a newly completed meeting is saved."
+                    : "Automation is disabled.";
+        _selectedComputerUsePlannerProvider = ComputerUseProviderDisplay(settings.ComputerUsePlannerProvider);
+        _computerUsePlannerModel = settings.ComputerUsePlannerModel;
+        _computerUsePlannerTimeoutSeconds = settings.ComputerUsePlannerTimeoutSeconds;
+        _computerUsePerActionTimeoutSeconds = settings.ComputerUsePerActionTimeoutSeconds;
+        _computerUseMaximumActionCount = settings.ComputerUseMaximumActionCount;
+        _computerUseAllowedApplications = settings.ComputerUseAllowedApplications;
+        _computerUseAllowedBrowserDomains = settings.ComputerUseAllowedBrowserDomains;
+        _computerUseIncludeWindowText = settings.ComputerUseIncludeWindowText;
+        _computerUseIncludeScreenshots = settings.ComputerUseIncludeScreenshots;
+        _computerUseIncludeBrowserPageText = settings.ComputerUseIncludeBrowserPageText;
+        _selectedComputerUseBrowserInterface = ComputerUseBrowserInterfaceDisplay(settings.ComputerUseBrowserInterface);
+        _computerUseBrowserEndpoint = settings.ComputerUseBrowserEndpoint;
+        _computerUseEnabled = settings.ComputerUseEnabled && ComputerUseConfigurationIsReady(out _);
+        _computerUseStatus = settings.ComputerUseEnabled && !_computerUseEnabled
+            ? "Computer Use was disabled because its saved provider, model, key, or application allowlist is unavailable."
+            : _computerUseEnabled
+                ? "Computer Use is ready for an explicit planner voice session."
+                : "Computer Use is disabled.";
         _showFloatingIndicator = settings.ShowFloatingIndicator;
         _selectedIndicatorPosition = IndicatorPositions.Contains(settings.IndicatorAnchor) ? settings.IndicatorAnchor : "Top Center";
         _autoMeetingDetectionEnabled = settings.AutoMeetingDetectionEnabled;
@@ -736,52 +1455,272 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _toastNotificationService.SetIdleIndicatorVisible(_showFloatingIndicator, showNow: false);
         _toastNotificationService.ConfigureActions(StopActiveRecordingFromIndicatorAsync, CancelActiveRecordingFromIndicatorAsync);
         _toastNotificationService.PositionChanged += OnIndicatorPositionChanged;
+        _dictationCoordinator.DeviceListChanged += OnDictationDeviceListChanged;
+        _dictationCoordinator.RouteChanged += OnDictationRouteChanged;
+        _dictationCoordinator.LevelChanged += OnDictationLevelChanged;
         _meetingDetectionService.ScanCompleted += OnMeetingDetectionScanCompleted;
         _meetingAutoStopTimer.Tick += MeetingAutoStopTimer_Tick;
+        _meetingPlaybackTimer.Tick += MeetingPlaybackTimer_Tick;
         _aliasSaveDebounceTimer.Tick += AliasSaveDebounceTimer_Tick;
+        SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
+        RefreshRecoverableMeetingSessions();
         _meetingPromptService.Reset();
 OnPropertyChanged(nameof(SelectedMicrophone));
-    OnPropertyChanged(nameof(SelectedAsrEngine));
-    OnPropertyChanged(nameof(SelectedModelProfile));
     OnPropertyChanged(nameof(SelectedHotkey));
     OnPropertyChanged(nameof(SelectedPasteBehavior));
+    OnPropertyChanged(nameof(SelectedTranscriptionModel));
+    OnPropertyChanged(nameof(SelectedFinalMeetingModel));
+    OnPropertyChanged(nameof(FinalMeetingModelStatus));
+    OnPropertyChanged(nameof(LiveMeetingModelStatus));
+    OnPropertyChanged(nameof(SelectedLiveMeetingModel));
+    OnPropertyChanged(nameof(SelectedLiveTranscriptOwnership));
+    OnPropertyChanged(nameof(ShowLiveWaveformOnHover));
+    OnPropertyChanged(nameof(LivePreviewOwnerLabel));
+    OnPropertyChanged(nameof(FinalTranscriptOwnerLabel));
+    OnPropertyChanged(nameof(GapRecoveryOwnerLabel));
+    OnPropertyChanged(nameof(ActiveModelLabel));
+    OnPropertyChanged(nameof(SelectedModelDescription));
+    OnPropertyChanged(nameof(SelectedModelLanguages));
+    OnPropertyChanged(nameof(SelectedModelDownloadSize));
+    OnPropertyChanged(nameof(SelectedModelCacheStatus));
     OnPropertyChanged(nameof(UserName));
     OnPropertyChanged(nameof(UserGreeting));
     OnPropertyChanged(nameof(SelectedSummaryProvider));
     OnPropertyChanged(nameof(SelectedSummaryTemplate));
     OnPropertyChanged(nameof(OpenAIApiKey));
+    OnPropertyChanged(nameof(OpenAIApiKeyStatus));
     OnPropertyChanged(nameof(OpenAIModel));
     OnPropertyChanged(nameof(OpenRouterApiKey));
+    OnPropertyChanged(nameof(OpenRouterApiKeyStatus));
     OnPropertyChanged(nameof(OpenRouterModel));
-    OnPropertyChanged(nameof(PostProcessingEnabled));
     OnPropertyChanged(nameof(EnableDoubleTapDictation));
-    OnPropertyChanged(nameof(PostProcessingPrompt));
+    OnPropertyChanged(nameof(RemoveFillerWords));
+    OnPropertyChanged(nameof(EnableLocalCleanup));
     OnPropertyChanged(nameof(SelectedTheme));
     OnPropertyChanged(nameof(StartAtLogin));
     OnPropertyChanged(nameof(OpenDashboardOnLaunch));
     OnPropertyChanged(nameof(SaveMeetingRecordings));
+    OnPropertyChanged(nameof(PostMeetingHookEnabled));
+    OnPropertyChanged(nameof(PostMeetingHookExecutablePath));
+    OnPropertyChanged(nameof(SelectedHookTranscriptPolicy));
+    OnPropertyChanged(nameof(PostMeetingHookTimeoutSeconds));
+    OnPropertyChanged(nameof(PostMeetingHookMaxAttempts));
+    OnPropertyChanged(nameof(AutoExportMarkdownEnabled));
+    OnPropertyChanged(nameof(AutoExportMarkdownDirectory));
+    OnPropertyChanged(nameof(SelectedAutoExportContent));
+    OnPropertyChanged(nameof(PostMeetingAutomationStatusText));
+    OnPropertyChanged(nameof(ComputerUseEnabled));
+    OnPropertyChanged(nameof(SelectedComputerUsePlannerProvider));
+    OnPropertyChanged(nameof(ComputerUsePlannerModel));
+    OnPropertyChanged(nameof(ComputerUsePlannerTimeoutSeconds));
+    OnPropertyChanged(nameof(ComputerUsePerActionTimeoutSeconds));
+    OnPropertyChanged(nameof(ComputerUseMaximumActionCount));
+    OnPropertyChanged(nameof(ComputerUseAllowedApplications));
+    OnPropertyChanged(nameof(ComputerUseAllowedBrowserDomains));
+    OnPropertyChanged(nameof(ComputerUseIncludeWindowText));
+    OnPropertyChanged(nameof(ComputerUseIncludeScreenshots));
+    OnPropertyChanged(nameof(ComputerUseIncludeBrowserPageText));
+    OnPropertyChanged(nameof(SelectedComputerUseBrowserInterface));
+    OnPropertyChanged(nameof(ComputerUseBrowserEndpoint));
+    OnPropertyChanged(nameof(ComputerUseStatusText));
+    OnPropertyChanged(nameof(ComputerUseVoiceButtonText));
+    OnPropertyChanged(nameof(ComputerUseStopEnabled));
+    if (settings.PostMeetingHookEnabled != _postMeetingHookEnabled ||
+        settings.AutoExportMarkdownEnabled != _autoExportMarkdownEnabled ||
+        settings.ComputerUseEnabled != _computerUseEnabled)
+    {
+        SaveSettings();
+    }
     OnPropertyChanged(nameof(ShowFloatingIndicator));
     OnPropertyChanged(nameof(SelectedIndicatorPosition));
     OnPropertyChanged(nameof(AutoMeetingDetectionEnabled));
     OnPropertyChanged(nameof(MeetingDetectionStatus));
     ApplyTheme(_theme);
     ShowPage(DictationsPage, DictationsNav);
-    Loaded += (_, _) => StartRuntime(showOnboarding: !_isParkedForBackground);
+    Loaded += (_, _) =>
+    {
+        StartRuntime(showOnboarding: !_isParkedForBackground);
+        if (!string.IsNullOrWhiteSpace(persistenceWarning))
+        {
+            System.Windows.MessageBox.Show(
+                persistenceWarning,
+                "Muesli data recovery",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    };
     Closing += (_, _) =>
     {
         _logService.Info("Main window closing.");
         _aliasSaveDebounceTimer.Stop();
         SaveActiveSpeakerAliases();
         _meetingAutoStopTimer.Stop();
+        _meetingPlaybackTimer.Stop();
+        SystemEvents.PowerModeChanged -= SystemEvents_PowerModeChanged;
+        _applicationShutdownCancellation.Cancel();
+        _computerUseCancellation?.Cancel();
+        _computerUseHttpClient.Dispose();
+        _meetingOperationCancellation?.Cancel();
+        if (_meetingRecordingCoordinator.IsRecording)
+        {
+            _meetingRecordingCoordinator.PreserveForShutdownAsync().GetAwaiter().GetResult();
+        }
         _meetingDetectionService.ScanCompleted -= OnMeetingDetectionScanCompleted;
         _globalHotkeyService.Dispose();
+        _dictationOperationCancellation?.Cancel();
+        _dictationCoordinator.DeviceListChanged -= OnDictationDeviceListChanged;
+        _dictationCoordinator.RouteChanged -= OnDictationRouteChanged;
+        _dictationCoordinator.LevelChanged -= OnDictationLevelChanged;
         _meetingDetectionService.Dispose();
         _meetingPromptService.Close();
-        _meetingTranscriptionClient.Dispose();
+        _modelLifecycle.ModelChanged -= OnTranscriptionModelChanged;
+        _modelLifecycle.Dispose();
+        _streamingModelLifecycle.ModelChanged -= OnStreamingModelChanged;
+        _streamingModelLifecycle.Dispose();
+        _dictationCoordinator.Dispose();
+        _dictationOperationCancellation?.Dispose();
+        _dictationOperationCancellation = null;
+        _meetingRecordingCoordinator.StateChanged -= OnMeetingSessionStateChanged;
+        _meetingRecordingCoordinator.HealthChanged -= OnMeetingAudioHealthChanged;
+        _meetingRecordingCoordinator.LevelChanged -= OnMeetingRecordingLevelChanged;
+        _meetingRecordingCoordinator.LiveTranscriptChanged -= OnLiveTranscriptChanged;
+        _meetingRecordingCoordinator.LiveTranscriptionFailed -= OnLiveTranscriptionFailed;
         _meetingRecordingCoordinator.Dispose();
+        _liveTranscriptWindow?.Close();
+        _liveTranscriptWindow = null;
+        _meetingTranscriptionClient.Dispose();
+        _meetingPlaybackService.StateChanged -= OnMeetingPlaybackStateChanged;
+        _meetingPlaybackService.Dispose();
+        _meetingOperationCancellation?.Dispose();
+        _meetingOperationCancellation = null;
+        _textCleanupService.Dispose();
         _trayIconService.Dispose();
+        _toastNotificationService.Dispose();
     };
 }
+
+    /// <summary>
+    /// Creates the actual MainWindow XAML tree for a presentation-only Phase 12 check.
+    /// This constructor deliberately assigns no-op null sentinels instead of constructing
+    /// production services.  It must remain free of stores, logs, native clients, tray,
+    /// hooks, registry, device, cache, network, and SystemEvents subscriptions.
+    /// </summary>
+    internal static MainWindow CreateVisualPreview(Phase12PreviewMode mode)
+        => new(mode);
+
+    private MainWindow(Phase12PreviewMode mode)
+    {
+        _isVisualPreview = true;
+        _dictationTranscriptionClient = null!;
+        _dictationCoordinator = null!;
+        _globalHotkeyService = null!;
+        _settingsStore = null!;
+        _dataStore = null!;
+        _toastNotificationService = null!;
+        _activeAppPasteService = null!;
+        _meetingTranscriptionClient = null!;
+        _meetingRecordingCoordinator = null!;
+        _meetingPlaybackService = null!;
+        _modelLifecycle = null!;
+        _streamingModelLifecycle = null!;
+        _meetingDetectionService = null!;
+        _meetingPromptService = null!;
+        _trayIconService = null!;
+        _onboardingProgressStore = null!;
+        _microphoneAccessService = null!;
+        _runtimeDiagnosticsService = null!;
+        _postMeetingAutomationService = null!;
+        _logService = null!;
+        _captureStorageService = null!;
+        _transcriptionBenchmarkService = null!;
+        _textCleanupService = null!;
+        _transcriptionPipelineService = null!;
+        _computerUseHttpClient = null!;
+        _computerUseTraceStore = null!;
+
+        _theme = mode.Theme;
+        _previewPageStateMessage = mode.PageStateMessage;
+        _userName = "Visual verification";
+        _dictationStatus = mode.PresentationStatus;
+        _runtimeDiagnostics = "Preview-only diagnostics. No production diagnostic service was created.";
+        _setupReadiness = mode.PresentationStatus;
+        _runtimeSetupStatus = mode.PresentationStatus;
+        _modelCacheDirectory = "Preview isolation: no model cache inspected.";
+        _modelCacheSize = "0 B";
+        _meetingDetectionStatus = "Preview isolation: meeting detection is not running.";
+        _selectedHotkey = mode.Page == "shortcuts" ? "Ctrl+Shift+Space" : "F8";
+        if (mode.Page == "shortcuts" && mode.Case == "conflict")
+            _dictationStatus = "Preview-only shortcut conflict: Ctrl+Shift+Space is unavailable. Choose another shortcut; preview cannot register or test it.";
+        if (mode.Page == "settings" && mode.Case == "startup-unavailable")
+            _dictationStatus = "Preview-only startup guidance: Windows registration was not inspected or changed in this isolated process.";
+        if ((mode.Page == "dashboard" || mode.Page == "meetings") && mode.Case == "long-text")
+            _dictationStatus = "Preview-only wrapping verification: this deliberately long message is not a dictation, meeting, transcript, insight, statistic, or persisted user activity. Resize the real page to review readable wrapping while all history remains empty.";
+        _openDashboardOnLaunch = true;
+
+        InitializeComponent();
+        FilteredDictations = CollectionViewSource.GetDefaultView(Dictations);
+        FilteredMeetings = CollectionViewSource.GetDefaultView(Meetings);
+        SearchDictationResults = new ListCollectionView(Dictations);
+        SearchMeetingResults = new ListCollectionView(Meetings);
+        PopulatePreviewModels(mode);
+        DataContext = this;
+        ApplyTheme(_theme);
+        VisualVerificationBannerText.Text = mode.Banner;
+        VisualVerificationBanner.Visibility = Visibility.Visible;
+        IsCompactLayout = mode.Size == "narrow";
+        ShowPreviewPage(mode.Page);
+        DisableVisualPreviewActions();
+    }
+
+    private void PopulatePreviewModels(Phase12PreviewMode mode)
+    {
+        if (mode.Page != "models") return;
+        var model = TranscriptionModels[0];
+        var snapshot = mode.Case switch
+        {
+            "ready" => new TranscriptionModelSnapshot(model, TranscriptionModelStatus.Ready, "Preview-only ready; no cache was inspected.", 0, "0 B", "No production model service was created.", false, false, false, false, false, false),
+            "downloading" => new TranscriptionModelSnapshot(model, TranscriptionModelStatus.Downloading, "Preview-only downloading: 42% (no download started).", 0, "0 B", "Cancel is visibly disabled in preview.", true, false, false, false, false, false),
+            "failure" => new TranscriptionModelSnapshot(model, TranscriptionModelStatus.Failed, "Preview-only failure: retry and diagnostics are guidance only.", 0, "0 B", "No retry, log, or network action is available.", false, false, false, false, false, false),
+            _ => new TranscriptionModelSnapshot(model, TranscriptionModelStatus.RuntimeUnavailable, "Preview-only offline/unavailable: connect before preparing.", 0, "0 B", "No network or model cache was inspected.", false, false, false, false, false, false)
+        };
+        TranscriptionModelItems.Add(new TranscriptionModelItem(snapshot));
+        _selectedTranscriptionModel = model;
+        _selectedFinalMeetingModel = model;
+        _dictationModelRuntimeStatus = snapshot.StatusText;
+    }
+
+    private void ShowPreviewPage(string page)
+    {
+        switch (page)
+        {
+            case "meetings": ShowPage(MeetingsPage, MeetingsNav); break;
+            case "search": ShowPage(SearchPage, DictationsNav); break;
+            case "dictionary": ShowPage(DictionaryPage, DictionaryNav); break;
+            case "models": ShowPage(ModelsPage, ModelsNav); break;
+            case "shortcuts": ShowPage(ShortcutsPage, ShortcutsNav); break;
+            case "settings": ShowPage(SettingsPage, SettingsNav); break;
+            case "about": ShowPage(AboutPage, AboutNav); break;
+            default: ShowPage(DictationsPage, DictationsNav); break;
+        }
+    }
+
+    private void DisableVisualPreviewActions()
+    {
+        // Preview windows use the real XAML pages, but every interactive control is inert.
+        // This is defence in depth alongside individual side-effect guards.
+        DisablePreviewControls(this);
+    }
+
+    private static void DisablePreviewControls(DependencyObject parent)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is System.Windows.Controls.Control control)
+                control.IsEnabled = false;
+            DisablePreviewControls(child);
+        }
+    }
 public void StartRuntime(bool showOnboarding)
 {
     if (_runtimeStarted)
@@ -795,7 +1734,7 @@ public void StartRuntime(bool showOnboarding)
     }
     _runtimeStarted = true;
     _logService.Info("Main window runtime starting.");
-    _trayIconService.Initialize(this);
+    _trayIconService.Initialize(this, CreateProductExperienceState, NavigateFromTray);
     _meetingDetectionService.MeetingDetected += OnMeetingDetected;
     if (AutoMeetingDetectionEnabled)
     {
@@ -811,6 +1750,7 @@ public void StartRuntime(bool showOnboarding)
     }
     _ = RefreshRuntimeDiagnosticsAsync();
     StartBackgroundUpdateCheck();
+    _ = EnsureTranscriptionReadyAsync();
 }
 public void SetBackgroundStatus()
 {
@@ -829,274 +1769,228 @@ public void ParkForBackgroundLaunch()
 public void ShowDashboardFromBackground()
 {
     _isParkedForBackground = false;
-    FitDashboardToWorkArea();
     Opacity = 1;
     ShowInTaskbar = true;
     Show();
+    // Show first so placement has a real HWND/PresentationSource instead of NaN or the
+    // parked (-32000) coordinates. This also keeps per-monitor DPI conversion truthful.
+    FitDashboardToWorkArea();
     WindowState = WindowState.Normal;
     Activate();
     ShowOnboardingIfNeeded();
 }
 private void FitDashboardToWorkArea()
 {
-    var area = SystemParameters.WorkArea;
-    MinWidth = Math.Max(760, Math.Min(980, area.Width - 24));
-    MinHeight = Math.Max(480, Math.Min(620, area.Height - 24));
-    Width = Math.Min(1240, Math.Max(MinWidth, area.Width - 24));
-    Height = Math.Min(820, Math.Max(MinHeight, area.Height - 24));
-    Left = area.Left + Math.Max(12, (area.Width - Width) / 2);
-    Top = area.Top + Math.Max(12, (area.Height - Height) / 2);
+    WindowPlacementService.FitToWorkArea(this);
 }
 private async void HoldToDictate_MouseDown(object sender, MouseButtonEventArgs e)
 {
     await StartDictationAsync(shouldPasteToActiveApp: false);
 }
-private void ShowOnboardingIfNeeded()
+private void ShowOnboardingIfNeeded(bool explicitResume = false)
 {
     if (_onboardingCompleted)
     {
         return;
     }
-    var window = new Window
+
+    if (_onboardingWindow is { IsVisible: true })
     {
-        Owner = this,
-        Title = "Welcome to Muesli",
-        Width = 720,
-        Height = 620,
-        MinWidth = 680,
-        MinHeight = 560,
-        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        ResizeMode = ResizeMode.NoResize,
-        Background = (System.Windows.Media.Brush)FindResource("BackgroundBaseBrush"),
-        Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush"),
-        FontFamily = FontFamily
-    };
-    var root = new DockPanel { Margin = new Thickness(28) };
-    window.Content = root;
-    var footer = new DockPanel { Margin = new Thickness(0, 20, 0, 0) };
-    DockPanel.SetDock(footer, Dock.Bottom);
-    root.Children.Add(footer);
-    var finish = new WpfButton
-    {
-        Content = "Start using Muesli",
-        Style = (Style)FindResource("PrimaryButton"),
-        MinWidth = 160,
-        HorizontalAlignment = System.Windows.HorizontalAlignment.Right
-    };
-    DockPanel.SetDock(finish, Dock.Right);
-    footer.Children.Add(finish);
-    var skip = new WpfButton
-    {
-        Content = "Skip",
-        Style = (Style)FindResource("GhostButton"),
-        MinWidth = 80,
-        Margin = new Thickness(0, 0, 10, 0),
-        HorizontalAlignment = System.Windows.HorizontalAlignment.Right
-    };
-    DockPanel.SetDock(skip, Dock.Right);
-    footer.Children.Add(skip);
-    var bodyScroll = new ScrollViewer
-    {
-        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-    };
-    root.Children.Add(bodyScroll);
-    var body = new StackPanel();
-    bodyScroll.Content = body;
-    body.Children.Add(new TextBlock
-    {
-        Text = "Set up local dictation",
-        Style = (Style)FindResource("PageTitle")
-    });
-    body.Children.Add(new TextBlock
-    {
-        Text = "Choose a microphone, pick a shortcut that is free on this Windows laptop, and verify local model readiness.",
-        Style = (Style)FindResource("PageSubtitle")
-    });
-    var nameInput = new WpfTextBox
-    {
-        Text = UserName,
-        MinWidth = 260,
-        Style = (Style)FindResource("MuesliTextBox")
-    };
-    body.Children.Add(BuildOnboardingRow("Your name", "Shown in the sidebar greeting.", nameInput));
-    var micCombo = new System.Windows.Controls.ComboBox
-    {
-        ItemsSource = MicrophoneDevices,
-        SelectedItem = SelectedMicrophone,
-        Style = (Style)FindResource("MuesliComboBox")
-    };
-    body.Children.Add(BuildOnboardingRow("Microphone", "Used for dictation and meeting recording.", micCombo));
-    var hotkeyCombo = new System.Windows.Controls.ComboBox
-    {
-        ItemsSource = HotkeyOptions,
-        SelectedItem = SelectedHotkey,
-        Style = (Style)FindResource("MuesliComboBox")
-    };
-    body.Children.Add(BuildOnboardingRow("Shortcut", "Use an alternate shortcut if F8 is already taken.", hotkeyCombo));
-    var startupCheck = new System.Windows.Controls.CheckBox
-    {
-        Content = "Launch at login",
-        IsChecked = StartAtLogin,
-        Style = (Style)FindResource("MuesliCheckBox")
-    };
-    body.Children.Add(BuildOnboardingRow("Startup", "Keep Muesli available from the tray after sign-in.", startupCheck));
-    var indicatorCheck = new System.Windows.Controls.CheckBox
-    {
-        Content = "Show floating indicator",
-        IsChecked = ShowFloatingIndicator,
-        Style = (Style)FindResource("MuesliCheckBox")
-    };
-    body.Children.Add(BuildOnboardingRow("Floating indicator", "Mirrors the OG app's small dictation pill.", indicatorCheck));
-    var crashCheck = new System.Windows.Controls.CheckBox
-    {
-        Content = "Send anonymous crash reports",
-        IsChecked = _crashReportingEnabled,
-        Style = (Style)FindResource("MuesliCheckBox")
-    };
-    body.Children.Add(BuildOnboardingRow(
-        "Crash reporting",
-        "Helps fix bugs faster. Only stack traces and app version are sent — never your transcripts, meeting recordings, or settings. You can change this in About → Privacy.",
-        crashCheck));
-    var readinessText = new WpfTextBox
-    {
-        Text = SetupReadiness,
-        MinHeight = 116,
-        Padding = new Thickness(12),
-        TextWrapping = TextWrapping.Wrap,
-        AcceptsReturn = true,
-        IsReadOnly = true,
-        Cursor = System.Windows.Input.Cursors.IBeam,
-        Style = (Style)FindResource("MuesliTextBox")
-    };
-    var readinessActions = new StackPanel { Orientation = WpfOrientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
-    var checkSetup = new WpfButton { Content = "Check setup", Style = (Style)FindResource("SecondaryButton") };
-    var installRuntime = new WpfButton { Content = "Install local transcription runtime", Style = (Style)FindResource("PrimaryButton"), Margin = new Thickness(10, 0, 0, 0) };
-    var downloadBase = new WpfButton { Content = "Download base model", Style = (Style)FindResource("PrimaryButton"), Margin = new Thickness(10, 0, 0, 0) };
-    readinessActions.Children.Add(checkSetup);
-    readinessActions.Children.Add(installRuntime);
-    readinessActions.Children.Add(downloadBase);
-    var setupStatusText = new TextBlock
-    {
-        Text = RuntimeSetupStatus,
-        Margin = new Thickness(0, 10, 0, 0),
-        FontSize = 12,
-        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush"),
-        TextWrapping = TextWrapping.Wrap
-    };
-    var readinessPanel = new StackPanel();
-    readinessPanel.Children.Add(readinessText);
-    readinessPanel.Children.Add(readinessActions);
-    readinessPanel.Children.Add(setupStatusText);
-    body.Children.Add(BuildOnboardingRow("Local model readiness", "Whisper base is the recommended CPU fallback for broad laptop support.", readinessPanel));
-    void RefreshRuntimeSetupUi()
-    {
-        setupStatusText.Text = RuntimeSetupStatus;
-        installRuntime.IsEnabled = CanInstallLocalRuntime && !_isInstallingLocalRuntime;
-        checkSetup.IsEnabled = !_isInstallingLocalRuntime;
-        downloadBase.IsEnabled = !_isInstallingLocalRuntime;
+        _onboardingWindow.Activate();
+        return;
     }
-    checkSetup.Click += async (_, _) =>
+
+    var savedProgress = _onboardingProgressStore.Load();
+    if (savedProgress.Deferred && !explicitResume)
     {
-        await RefreshRuntimeDiagnosticsAsync();
-        readinessText.Text = SetupReadiness;
-        RefreshRuntimeSetupUi();
-    };
-    installRuntime.Click += async (_, _) =>
+        return;
+    }
+    if (savedProgress.Deferred)
     {
-        await InstallLocalRuntimeAsync(
-            onStatus: status =>
-            {
-                RuntimeSetupStatus = status;
-                setupStatusText.Text = status;
-            },
-            onAfterRefresh: () =>
-            {
-                readinessText.Text = SetupReadiness;
-                RefreshRuntimeSetupUi();
-            });
-    };
-    downloadBase.Click += async (_, _) =>
-    {
-        try
-        {
-            downloadBase.IsEnabled = false;
-            DictationStatus = "Downloading base model";
-            var result = await _dictationCoordinator.DownloadModelAsync("whisper", "base");
-            DictationStatus = result.Text;
-            await RefreshRuntimeDiagnosticsAsync();
-            readinessText.Text = SetupReadiness;
-        }
-        catch (Exception exception)
-        {
-            DictationStatus = $"Base model download failed: {exception.Message}";
-            _toastNotificationService.Show("Model download failed", exception.Message, ToastState.Error, 5200);
-        }
-        finally
-        {
-            downloadBase.IsEnabled = true;
-        }
-    };
-    RefreshRuntimeSetupUi();
-    finish.Click += (_, _) =>
-    {
-        UserName = string.IsNullOrWhiteSpace(nameInput.Text) ? UserName : nameInput.Text.Trim();
-        SelectedMicrophone = micCombo.SelectedItem as string ?? SelectedMicrophone;
-        SelectedHotkey = hotkeyCombo.SelectedItem as string ?? SelectedHotkey;
-        StartAtLogin = startupCheck.IsChecked == true;
-        ShowFloatingIndicator = indicatorCheck.IsChecked == true;
-        _crashReportingEnabled = crashCheck.IsChecked == true;
-        _crashReportingStartupValue = _crashReportingEnabled;
-        _crashReportingPromptShown = true;
-        OnPropertyChanged(nameof(CrashReportingEnabled));
-        OnPropertyChanged(nameof(CrashReportingRestartHintVisible));
-        _onboardingCompleted = true;
-        SaveSettings();
-        window.Close();
-        _ = EnsureBaseModelDownloadedAsync();
-    };
-    skip.Click += (_, _) =>
-    {
-        _crashReportingPromptShown = true;
-        _onboardingCompleted = true;
-        SaveSettings();
-        window.Close();
-    };
-    window.ShowDialog();
+        savedProgress = savedProgress with { Deferred = false, LastStatus = "Setup resumed. Continue from the saved step." };
+        _onboardingProgressStore.Save(savedProgress);
+    }
+    var progress = OnboardingProgressReconciler.Reconcile(
+        savedProgress,
+        new OnboardingSelection(SelectedMicrophone, SelectedTranscriptionModel.Id, SelectedFinalMeetingModel.Id, SelectedLiveMeetingModel.Id, SelectedHotkey),
+        id => _modelLifecycle.Snapshot(id).Status is TranscriptionModelStatus.Ready or TranscriptionModelStatus.Selected,
+        id => _streamingModelLifecycle.Snapshot(id).Status is TranscriptionModelStatus.Ready or TranscriptionModelStatus.Selected);
+    var context = new OnboardingContext(
+        MicrophoneDevices, HotkeyOptions, TranscriptionModels, LiveMeetingModels,
+        new OnboardingDraft(UserName, SelectedMicrophone, SelectedHotkey, SelectedTranscriptionModel.Id, SelectedFinalMeetingModel.Id, SelectedLiveMeetingModel.Id, StartAtLogin, ShowFloatingIndicator, SelectedIndicatorPosition, SelectedSummaryProvider), _ollamaEndpoint,
+        microphone => _microphoneAccessService.ProbeAsync(microphone),
+        (id, progress, token) => _modelLifecycle.PrepareAsync(id, progress, token),
+        (id, progress, token) => _modelLifecycle.VerifyAsync(id, progress, token),
+        id => _modelLifecycle.Cancel(id),
+        (id, progress, token) => _modelLifecycle.RetryAsync(id, token),
+        OnboardingOfflineModelSnapshot,
+        (id, progress, token) => _streamingModelLifecycle.PrepareAsync(id, progress, token),
+        (id, progress, token) => _streamingModelLifecycle.VerifyAsync(id, progress, token),
+        id => _streamingModelLifecycle.Cancel(id),
+        (id, progress, token) => _streamingModelLifecycle.RetryAsync(id, token),
+        OnboardingLiveModelSnapshot,
+        RunOnboardingPipelineTestForWindowAsync,
+        gesture => TestOnboardingHotkey(gesture),
+        !OpenAIApiKeyStatus.Equals("Not configured", StringComparison.OrdinalIgnoreCase),
+        !OpenRouterApiKeyStatus.Equals("Not configured", StringComparison.OrdinalIgnoreCase),
+        IndicatorPositions,
+        PreviewOnboardingIndicator,
+        ResetOnboardingIndicatorPosition,
+        OpenOnboardingSummaryProviderSettings,
+        ApplyOnboardingDraft,
+        value => _onboardingProgressStore.Save(value),
+        CompleteOnboarding);
+    _onboardingWindow = new OnboardingWindow(context, progress) { Owner = this };
+    _onboardingWindow.Closed += (_, _) => { _onboardingWindow = null; _trayIconService.Refresh(); };
+    _onboardingWindow.Show();
 }
-private Border BuildOnboardingRow(string title, string description, FrameworkElement control)
+
+private OnboardingModelSnapshot OnboardingOfflineModelSnapshot(string modelId)
 {
-    var card = new Border
-    {
-        Style = (Style)FindResource("ContentCard"),
-        Margin = new Thickness(0, 0, 0, 14)
-    };
-    var grid = new Grid();
-    grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-    grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
-    card.Child = grid;
-    var copy = new StackPanel { Margin = new Thickness(0, 0, 18, 0) };
-    copy.Children.Add(new TextBlock
-    {
-        Text = title,
-        FontSize = 15,
-        FontWeight = FontWeights.SemiBold,
-        Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
-    });
-    copy.Children.Add(new TextBlock
-    {
-        Text = description,
-        Margin = new Thickness(0, 5, 0, 0),
-        FontSize = 12,
-        TextWrapping = TextWrapping.Wrap,
-        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondaryBrush")
-    });
-    grid.Children.Add(copy);
-    control.VerticalAlignment = VerticalAlignment.Center;
-    Grid.SetColumn(control, 1);
-    grid.Children.Add(control);
-    return card;
+    var snapshot = _modelLifecycle.Snapshot(modelId);
+    return new OnboardingModelSnapshot(snapshot.StatusText,
+        snapshot.Status is TranscriptionModelStatus.Ready or TranscriptionModelStatus.Selected,
+        snapshot.IsBusy, snapshot.CanPrepare, snapshot.CanCancel, snapshot.CanRetry, snapshot.CanVerify);
 }
+
+private OnboardingModelSnapshot OnboardingLiveModelSnapshot(string modelId)
+{
+    var snapshot = _streamingModelLifecycle.Snapshot(modelId);
+    return new OnboardingModelSnapshot(snapshot.StatusText,
+        snapshot.Status is TranscriptionModelStatus.Ready or TranscriptionModelStatus.Selected,
+        snapshot.IsBusy, snapshot.CanPrepare, snapshot.CanCancel, snapshot.CanRetry, snapshot.CanVerify);
+}
+
+private void PreviewOnboardingIndicator()
+{
+    _toastNotificationService.SetIndicatorAnchor(SelectedIndicatorPosition, clearCustomPosition: false);
+    _toastNotificationService.ShowIdle(SelectedHotkey);
+}
+
+private void ResetOnboardingIndicatorPosition()
+{
+    SelectedIndicatorPosition = "Top Center";
+    _indicatorLeft = null;
+    _indicatorTop = null;
+    _toastNotificationService.SetSavedPosition(null, null);
+    _toastNotificationService.SetIndicatorAnchor(SelectedIndicatorPosition, clearCustomPosition: true);
+}
+
+private void OpenOnboardingSummaryProviderSettings()
+{
+    _onboardingWindow?.Close();
+    ShowPage(SettingsPage, SettingsNav);
+}
+
+private bool TestOnboardingHotkey(string gesture)
+{
+    var previous = SelectedHotkey;
+    var advisoryAvailable = false;
+    try { advisoryAvailable = HotkeyConflictProbe.IsAdvisoryRegistrationAvailable(gesture); }
+    catch (Exception exception)
+    {
+        _logService.Error("Onboarding shortcut advisory probe failed; continuing with the decisive hook test.", exception);
+    }
+
+    // RegisterGlobalHotkey is the same low-level hook used by dictation.  The advisory
+    // RegisterHotKey probe is deliberately supplemental: it cannot veto that real test.
+    _selectedHotkey = gesture;
+    OnPropertyChanged(nameof(SelectedHotkey));
+    var result = HotkeyCandidateHookTest.Run(
+        RegisterGlobalHotkey,
+        () =>
+        {
+            _selectedHotkey = previous;
+            OnPropertyChanged(nameof(SelectedHotkey));
+            return RegisterGlobalHotkey();
+        });
+
+    if (!result.PreviousHookRestored)
+    {
+        var exception = result.RestorationException ?? new InvalidOperationException("The previous shortcut hook could not be restored.");
+        _logService.Error("Onboarding shortcut hook restoration failed after candidate test.", exception);
+    }
+    if (result.CandidateRegistered)
+        DictationStatus = advisoryAvailable
+            ? $"Shortcut {gesture} passed the actual dictation-hook test; the advisory probe also found no common conflict."
+            : $"Shortcut {gesture} passed the actual dictation-hook test. Windows advisory registration was unavailable, but did not veto the real hook.";
+    return result.CandidateRegistered;
+}
+
+private async Task<string> RunOnboardingPipelineTestForWindowAsync(CancellationToken cancellationToken)
+{
+    cancellationToken.ThrowIfCancellationRequested();
+    if (_dictationCoordinator.IsBusy || _dictationCoordinator.IsRecording)
+        throw new InvalidOperationException("Dictation is already active.");
+    if (!_dictationCoordinator.IsModelReady)
+        throw new InvalidOperationException($"{ActiveModelLabel} must be prepared before this test.");
+    try
+    {
+        DictationStatus = "Recording a local setup test";
+        await _dictationCoordinator.StartAsync(SelectedMicrophone);
+        await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+        var result = await _dictationCoordinator.StopForOnboardingTestAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return result.Text?.Trim() ?? "";
+    }
+    catch
+    {
+        if (_dictationCoordinator.IsRecording) await _dictationCoordinator.CancelAsync();
+        throw;
+    }
+}
+
+private void ApplyOnboardingDraft(OnboardingDraft draft)
+{
+    UserName = draft.UserName;
+    SelectedMicrophone = draft.Microphone;
+    SelectedHotkey = draft.Hotkey;
+    SelectedTranscriptionModel = TranscriptionModelCatalog.Get(draft.DictationModelId);
+    SelectedFinalMeetingModel = TranscriptionModelCatalog.Get(draft.FinalModelId);
+    SelectedLiveMeetingModel = LiveMeetingModels.FirstOrDefault(item => item.Id == draft.LiveModelId) ?? LiveModelChoice.Off;
+    StartAtLogin = draft.StartAtLogin;
+    ShowFloatingIndicator = draft.ShowIndicator;
+    SelectedIndicatorPosition = draft.IndicatorPosition;
+    SelectedSummaryProvider = draft.SummaryProvider;
+    SaveSettings(); // Settings are authoritative; progress is saved after this delegate returns.
+}
+
+private void CompleteOnboarding()
+{
+    _onboardingCompleted = true;
+    SaveSettings();
+    _onboardingProgressStore.Clear();
+    DictationStatus = "Setup completed";
+    _trayIconService.Refresh();
+    OnPropertyChanged(nameof(SetupNeedsResume));
+    OnPropertyChanged(nameof(SetupResumeLabel));
+}
+
+private ProductExperienceState CreateProductExperienceState()
+{
+    var progress = _onboardingProgressStore.Load();
+    return new ProductExperienceState(
+        !_onboardingCompleted || progress.Deferred,
+        _onboardingCompleted ? "Setup complete" : "Resume setup",
+        StartupRegistrationState.FromWindows(),
+        Dictations.OrderByDescending(item => item.Timestamp).Take(6).Select(item => new ProductHistoryEntry("Dictation", item.Timestamp)).ToList(),
+        Meetings.OrderByDescending(item => item.CreatedAt).Take(6).Select(item => new ProductHistoryEntry(item.Title, new DateTimeOffset(item.CreatedAt))).ToList(),
+        _lastMeetingDetectionScan?.Found == true ? _lastMeetingDetectionScan.DetectedMeeting?.Platform ?? "Meeting detected" : "No meeting detected");
+}
+
+private void NavigateFromTray(string destination)
+{
+    switch (destination)
+    {
+        case "resume": ShowOnboardingIfNeeded(explicitResume: true); break;
+        case "tour": ShowFeatureTour(); break;
+        case "dictations": ShowPage(DictationsPage, DictationsNav); break;
+        case "meetings": ShowPage(MeetingsPage, MeetingsNav); break;
+        case "settings": ShowPage(SettingsPage, SettingsNav); break;
+        case "about": ShowPage(AboutPage, AboutNav); break;
+    }
+}
+
 private async void HoldToDictate_MouseUp(object sender, MouseButtonEventArgs e)
 {
     await StopDictationAsync();
@@ -1129,7 +2023,7 @@ private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventA
     var label = BuildCapturedHotkeyLabel(e);
     if (label is null)
     {
-        DictationStatus = "Press a function key or include Ctrl, Alt, or Shift";
+        DictationStatus = "Press a function key or include Ctrl, Alt, Shift, or Win";
         return;
     }
     AddHotkeyOptionIfMissing(label);
@@ -1164,6 +2058,10 @@ private static string? BuildCapturedHotkeyLabel(System.Windows.Input.KeyEventArg
     {
         parts.Add("Shift");
     }
+    if (modifiers.HasFlag(ModifierKeys.Windows))
+    {
+        parts.Add("Win");
+    }
     if (key is not (>= Key.F1 and <= Key.F24) && parts.Count == 0)
     {
         return null;
@@ -1182,7 +2080,9 @@ private bool RegisterGlobalHotkey()
         _globalHotkeyService.Register(
             SelectedHotkey,
             () => Dispatcher.InvokeAsync(HandleHotkeyDownAsync),
-            () => Dispatcher.InvokeAsync(HandleHotkeyUpAsync));
+            () => Dispatcher.InvokeAsync(HandleHotkeyUpAsync),
+            () => _dictationCoordinator.IsRecording || _dictationCoordinator.IsTranscribing || _dictationOperationCancellation is not null,
+            () => Dispatcher.InvokeAsync(CancelDictationAsync));
         return true;
     }
     catch (Exception exception)
@@ -1212,39 +2112,21 @@ private string NormalizeHotkey(string? value, bool allowCustom = false)
 private static bool TryNormalizeCustomHotkey(string value, out string normalized)
 {
     normalized = "";
-    var parts = value.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    if (parts.Length == 0)
+    try
     {
-        return false;
-    }
-    var keyPart = parts[^1].Replace(" ", "", StringComparison.OrdinalIgnoreCase);
-    if (!Enum.TryParse<Key>(keyPart, ignoreCase: true, out var key) || key == Key.None)
-    {
-        return false;
-    }
-    var modifiers = new List<string>();
-    foreach (var part in parts.Take(parts.Length - 1))
-    {
-        if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase) ||
-            part.Equals("Control", StringComparison.OrdinalIgnoreCase))
-        {
-            modifiers.Add("Ctrl");
-        }
-        else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase))
-        {
-            modifiers.Add("Shift");
-        }
-        else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase))
-        {
-            modifiers.Add("Alt");
-        }
-        else
+        var gesture = HotkeyGesture.Parse(value);
+        if (gesture.Key == Key.Escape ||
+            (gesture.Key is not (>= Key.F1 and <= Key.F24) && gesture.Modifiers == ModifierKeys.None))
         {
             return false;
         }
+        normalized = gesture.Label;
+        return true;
     }
-    normalized = modifiers.Count == 0 ? key.ToString() : $"{string.Join("+", modifiers)}+{key}";
-    return key is >= Key.F1 and <= Key.F24 || modifiers.Count > 0;
+    catch (InvalidOperationException)
+    {
+        return false;
+    }
 }
 private void AddHotkeyOptionIfMissing(string hotkey)
 {
@@ -1255,52 +2137,44 @@ private void AddHotkeyOptionIfMissing(string hotkey)
 }
 private async Task HandleHotkeyDownAsync()
 {
-    if (!EnableDoubleTapDictation)
-    {
-        await StartHotkeyDictationAsync();
-        return;
-    }
-
-    if (_isHandsFreeDictationLocked)
-    {
-        ResetHotkeyDictationState();
-        await StopDictationAsync();
-        return;
-    }
-
-    if (_dictationCoordinator.IsRecording)
-    {
-        if (_awaitingHandsFreeSecondTap)
-        {
-            _hotkeyReleaseTimer.Stop();
-            _awaitingHandsFreeSecondTap = false;
-            _isHandsFreeDictationLocked = true;
-            DictationStatus = "Hands-free dictation active";
-            _toastNotificationService.Show("Hands-free on", "Tap the shortcut again to stop", ToastState.Success, 1800);
-        }
-
-        return;
-    }
-
-    ResetHotkeyDictationState();
-    await StartHotkeyDictationAsync();
+    await ExecuteHotkeyActionAsync(_dictationHotkeyState.KeyDown(EnableDoubleTapDictation));
 }
 private async Task HandleHotkeyUpAsync()
 {
-    if (!EnableDoubleTapDictation)
+    await ExecuteHotkeyActionAsync(_dictationHotkeyState.KeyUp(EnableDoubleTapDictation));
+}
+
+private async Task ExecuteHotkeyActionAsync(DictationHotkeyAction action)
+{
+    // Planner voice capture has a separate explicit activation provenance. The ordinary dictation
+    // hotkey must never stop, transcribe, persist, paste, or execute planner audio.
+    if (_computerUseVoiceCaptureActive || _computerUseIsRunning)
     {
-        await StopDictationAsync();
         return;
     }
-
-    if (!_dictationCoordinator.IsRecording || _dictationCoordinator.IsBusy || _isHandsFreeDictationLocked)
+    switch (action)
     {
-        return;
+        case DictationHotkeyAction.StartRecording:
+            await StartHotkeyDictationAsync();
+            if (!_dictationCoordinator.IsRecording)
+            {
+                ResetHotkeyDictationState();
+            }
+            break;
+        case DictationHotkeyAction.StopRecording:
+            _hotkeyReleaseTimer.Stop();
+            await StopDictationAsync();
+            break;
+        case DictationHotkeyAction.StartDoubleTapTimer:
+            _hotkeyReleaseTimer.Stop();
+            _hotkeyReleaseTimer.Start();
+            break;
+        case DictationHotkeyAction.EnterHandsFree:
+            _hotkeyReleaseTimer.Stop();
+            DictationStatus = "Hands-free dictation active";
+            _toastNotificationService.Show("Recording", "Click the square or tap the shortcut to stop", ToastState.Recording, 0);
+            break;
     }
-
-    _awaitingHandsFreeSecondTap = true;
-    _hotkeyReleaseTimer.Stop();
-    _hotkeyReleaseTimer.Start();
 }
 private async Task StartDictationAsync(bool shouldPasteToActiveApp)
 {
@@ -1314,6 +2188,9 @@ private async Task StartDictationAsync(bool shouldPasteToActiveApp)
         _pasteTargetWindow = shouldPasteToActiveApp
             ? _activeAppPasteService.CaptureForegroundWindow()
             : IntPtr.Zero;
+        _pasteTargetInfo = shouldPasteToActiveApp
+            ? _activeAppPasteService.DescribeWindow(_pasteTargetWindow)
+            : PasteTargetInfo.Unknown;
         DictationStatus = "Listening";
         _toastNotificationService.Show("Recording", $"Hold {SelectedHotkey} or the button while speaking", ToastState.Recording, 0);
         await _dictationCoordinator.StartAsync(SelectedMicrophone);
@@ -1328,128 +2205,532 @@ private async Task StartDictationAsync(bool shouldPasteToActiveApp)
 }
 private async Task StopDictationAsync()
 {
+    if (_computerUseVoiceCaptureActive || _computerUseIsRunning)
+    {
+        return;
+    }
     if (!_dictationCoordinator.IsRecording || _dictationCoordinator.IsBusy)
     {
         return;
     }
 
     ResetHotkeyDictationState();
+    var traceId = Guid.NewGuid().ToString("N")[..12];
+    var releaseToPasteStarted = Stopwatch.StartNew();
+    DictationStopResult? stopResult = null;
+    var operationCancellation = new CancellationTokenSource();
+    _dictationOperationCancellation = operationCancellation;
 
     TranscriptionResult result;
     try
     {
         DictationStatus = "Transcribing";
         _toastNotificationService.Show("Transcribing", "Processing local audio", ToastState.Transcribing, 0);
-        result = await _dictationCoordinator.StopAsync(new TranscriptionOptions(SelectedAsrEngine, SelectedModelProfile));
+        stopResult = await _dictationCoordinator.StopAsync(traceId, operationCancellation.Token);
+        result = stopResult.Transcription;
+        _transcriptionPipelineService.LogTranscriptionResult(
+            "dictation", result, _dictationCoordinator.EngineId, _dictationCoordinator.ModelId);
+    }
+    catch (OperationCanceledException) when (operationCancellation.IsCancellationRequested)
+    {
+        CompleteDictationOperationCancellation(operationCancellation);
+        _pasteTargetWindow = IntPtr.Zero;
+        _shouldPasteToActiveApp = false;
+        DictationStatus = "Dictation cancelled";
+        _logService.Info($"Dictation cancelled. trace={traceId}; stage=transcription; transcriptPersisted=false; transcriptDelivered=false");
+        _toastNotificationService.ShowIdle(SelectedHotkey);
+        return;
     }
     catch (Exception exception)
     {
+        CompleteDictationOperationCancellation(operationCancellation);
+        if (_dictationCoordinator.IsRecording)
+        {
+            await _dictationCoordinator.CancelAsync();
+        }
+
         DictationStatus = $"Dictation failed: {exception.Message}";
         _logService.Error("Dictation transcription failed.", exception);
         _toastNotificationService.Show("Dictation failed", exception.Message, ToastState.Error);
         return;
     }
+    CompleteDictationOperationCancellation(operationCancellation);
     var textToUse = "";
+    var blankAudioDetected = false;
+    var cleanupStarted = Stopwatch.StartNew();
     if (!string.IsNullOrWhiteSpace(result.Text))
     {
-        textToUse = DictionaryCorrectionService.Apply(result.Text, DictionaryEntries.Select(entry => entry.Record));
-        textToUse = await PostProcessIfEnabledAsync(textToUse, "dictation", _dictationCoordinator.PostProcessAsync);
+        if (result.Text.Contains("[BLANK_AUDIO]", StringComparison.OrdinalIgnoreCase) ||
+            result.Text.Equals("BLANK_AUDIO", StringComparison.OrdinalIgnoreCase))
+        {
+            blankAudioDetected = true;
+            _logService.Info($"Blank audio detected. Diagnostic: {result.Diagnostic}");
+        }
+        else
+        {
+            textToUse = await _transcriptionPipelineService.PrepareDictationTextAsync(
+                result.Text,
+                enableCleanup: false,
+                removeFillerWords: RemoveFillerWords,
+                DictionaryEntries.Select(entry => entry.Record));
+        }
+    }
+    cleanupStarted.Stop();
+    if (textToUse.Length > 0)
+    {
+        // Commit the transcript before interacting with another process or the clipboard.
+        // A focus/input/clipboard failure can then never make successful ASR text unrecoverable.
+        var persistenceStarted = Stopwatch.StartNew();
         Dictations.Insert(0, new DictationItem(
             $"dict_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
             DateTime.Now,
             DateTime.Now.ToString("hh:mm tt"),
             textToUse,
-            SelectedModelProfile,
+            _dictationCoordinator.ModelId,
             result.DurationMs));
-        SaveDictations();
+        var persistenceSucceeded = true;
+        try
+        {
+            SaveDictations();
+        }
+        catch (Exception persistenceException)
+        {
+            persistenceSucceeded = false;
+            _logService.Error("Dictation history save failed; keeping the transcript in the current dashboard and continuing delivery.", persistenceException);
+        }
         OnPropertyChanged(nameof(DayStreak));
         OnPropertyChanged(nameof(WordsDictated));
         OnPropertyChanged(nameof(WordsDictatedDisplay));
         OnPropertyChanged(nameof(AverageWpm));
         RefreshSearchResults();
-    }
-    if (textToUse.Length > 0)
-    {
+        persistenceStarted.Stop();
+
+        var deliveryStarted = Stopwatch.StartNew();
+        PasteOperationResult pasteResult;
+        var deliveryMode = "clipboard";
+        var deliverySucceeded = true;
         try
         {
             if (_shouldPasteToActiveApp && SelectedPasteBehavior == "active-app")
             {
-                await _activeAppPasteService.PasteTextAsync(textToUse, _pasteTargetWindow);
-                DictationStatus = "Pasted";
-                _toastNotificationService.Show("Pasted", textToUse, ToastState.Success);
+                deliveryMode = "active-app";
+                pasteResult = await _activeAppPasteService.PasteTextAsync(textToUse, _pasteTargetWindow);
+                DictationStatus = persistenceSucceeded ? "Pasted" : "Pasted; history save failed";
+                _toastNotificationService.Show(
+                    persistenceSucceeded ? "Pasted" : "Pasted; history save failed",
+                    persistenceSucceeded ? "Transcript delivered to the original app" : "The delivered text remains visible in this dashboard",
+                    persistenceSucceeded ? ToastState.Success : ToastState.Error);
             }
             else
             {
-                System.Windows.Clipboard.SetText(textToUse);
-                DictationStatus = "Copied";
-                _toastNotificationService.Show("Copied", "Transcript copied to clipboard", ToastState.Success);
+                var clipboardMs = await _activeAppPasteService.CopyTextAsync(textToUse);
+                pasteResult = new PasteOperationResult(
+                    clipboardMs,
+                    clipboardMs,
+                    0,
+                    0,
+                    false);
+                DictationStatus = persistenceSucceeded ? "Copied" : "Copied; history save failed";
+                _toastNotificationService.Show(
+                    persistenceSucceeded ? "Copied" : "Copied; history save failed",
+                    persistenceSucceeded ? "Transcript copied to clipboard" : "The copied text remains visible in this dashboard",
+                    persistenceSucceeded ? ToastState.Success : ToastState.Error);
             }
+
+            deliveryStarted.Stop();
         }
         catch (Exception exception)
         {
-            DictationStatus = $"Dictation ready, paste failed: {exception.Message}";
+            deliveryStarted.Stop();
+            deliverySucceeded = false;
+            var fallbackCopied = false;
+            long fallbackClipboardMs = 0;
+            try
+            {
+                fallbackClipboardMs = await _activeAppPasteService.CopyTextAsync(textToUse);
+                fallbackCopied = true;
+            }
+            catch (Exception clipboardException)
+            {
+                _logService.Error("Clipboard fallback failed; the transcript remains in dictation history.", clipboardException);
+            }
+            pasteResult = new PasteOperationResult(
+                deliveryStarted.ElapsedMilliseconds,
+                fallbackClipboardMs,
+                0,
+                0,
+                false);
+            DictationStatus = fallbackCopied
+                ? persistenceSucceeded
+                    ? "Paste failed; transcript copied and saved in history"
+                    : "Paste failed; transcript copied and visible in the dashboard"
+                : persistenceSucceeded
+                    ? "Paste and clipboard failed; transcript saved in history"
+                    : "Delivery and history save failed; transcript remains visible in the dashboard";
             _logService.Error("Active-app paste failed after successful dictation.", exception);
-            _toastNotificationService.Show("Dictation ready", "Paste failed; transcript is in the app", ToastState.Error);
+            _toastNotificationService.Show(
+                "Dictation saved",
+                fallbackCopied ? "Paste failed; copied to clipboard" : "Open dictation history to recover it",
+                ToastState.Error);
         }
+
+        var releaseToPasteMs = releaseToPasteStarted.ElapsedMilliseconds;
+        releaseToPasteStarted.Stop();
+
+        var latency = stopResult?.Latency ??
+                      new DictationLatencyMetrics(traceId, 0, 0, 0, 0, "unavailable", 0, 0);
+        _logService.Info(
+            $"Dictation latency trace. trace={traceId}; status={(deliverySucceeded && persistenceSucceeded ? "success" : !persistenceSucceeded ? "history-failed" : "paste-failed")}; engine={_dictationCoordinator.EngineId}; model={_dictationCoordinator.ModelId}; audioDurationMs={result.DurationMs}; chars={textToUse.Length}; releaseToPasteMs={releaseToPasteMs}; releaseToUiSettledMs={releaseToPasteStarted.ElapsedMilliseconds}; captureTotalMs={latency.CaptureTotalMs}; captureStopDisposeMs={latency.CaptureStopDisposeMs}; captureFlushWaitMs={latency.CaptureFlushWaitMs}; capturePreparationMs={latency.CapturePreparationMs}; capturePreparation={TraceValue(latency.CapturePreparation)}; transcriptionWallMs={latency.TranscriptionWallMs}; coordinatorTotalMs={latency.CoordinatorTotalMs}; cleanupDictionaryMs={cleanupStarted.ElapsedMilliseconds}; fillerRemoval={RemoveFillerWords}; deliveryMode={deliveryMode}; deliveryMs={deliveryStarted.ElapsedMilliseconds}; clipboardMs={pasteResult.ClipboardMs}; focusWaitMs={pasteResult.FocusWaitMs}; inputMs={pasteResult.InputMs}; targetForeground={pasteResult.TargetWasForeground}; targetProcess={TraceValue(_pasteTargetInfo.ProcessName)}; targetProcessId={_pasteTargetInfo.ProcessId}; historyPersisted={persistenceSucceeded}; persistenceUiMs={persistenceStarted.ElapsedMilliseconds}");
     }
     else
     {
-        var diagnostic = FirstDiagnosticLine(result.Diagnostic);
-        DictationStatus = string.IsNullOrWhiteSpace(diagnostic) ? "No speech detected" : $"No speech detected. {diagnostic}";
+        releaseToPasteStarted.Stop();
+        var diagnostic = blankAudioDetected
+            ? "Switch microphone to System default or your headset mic."
+            : FirstDiagnosticLine(result.Diagnostic);
+        DictationStatus = blankAudioDetected
+            ? "No voice detected. Check microphone input."
+            : string.IsNullOrWhiteSpace(diagnostic) ? "No speech detected" : $"No speech detected. {diagnostic}";
         _logService.Info($"No speech detected. Diagnostic: {result.Diagnostic}");
-        _toastNotificationService.Show("No speech detected", diagnostic, ToastState.Error, 3600);
+        _logService.Info(
+            $"Dictation latency trace. trace={traceId}; status=no-speech; engine={_dictationCoordinator.EngineId}; model={_dictationCoordinator.ModelId}; audioDurationMs={result.DurationMs}; chars=0; releaseToPasteMs=0; releaseToUiSettledMs={releaseToPasteStarted.ElapsedMilliseconds}; captureTotalMs={stopResult?.Latency.CaptureTotalMs ?? 0}; transcriptionWallMs={stopResult?.Latency.TranscriptionWallMs ?? 0}; cleanupDictionaryMs={cleanupStarted.ElapsedMilliseconds}");
+        _toastNotificationService.Show(blankAudioDetected ? "No voice detected" : "No speech detected", diagnostic, ToastState.Error, 3600);
     }
 }
 private async Task StopActiveRecordingFromIndicatorAsync()
 {
     await Dispatcher.InvokeAsync(async () =>
     {
+        if (_computerUseVoiceCaptureActive)
+        {
+            await StopComputerUseVoiceCaptureAndRunAsync();
+            return;
+        }
         if (_isMeetingRecording)
         {
             await ToggleMeetingRecordingAsync(null);
             return;
         }
         await StopDictationAsync();
-    });
+    }).Task.Unwrap();
 }
 private async Task CancelActiveRecordingFromIndicatorAsync()
 {
     await Dispatcher.InvokeAsync(async () =>
     {
+        if (_computerUseVoiceCaptureActive || _computerUseIsRunning)
+        {
+            await CancelComputerUseAsync();
+            return;
+        }
         if (_isMeetingRecording)
         {
-            await ToggleMeetingRecordingAsync(null);
+            await CancelMeetingRecordingAsync();
             return;
         }
-        if (!_dictationCoordinator.IsRecording || _dictationCoordinator.IsBusy)
+        if (_meetingRecordingCoordinator.State is MeetingSessionState.Stopping or MeetingSessionState.Finalizing)
         {
+            _meetingOperationCancellation?.Cancel();
             return;
         }
-        await _dictationCoordinator.CancelAsync();
-        ResetHotkeyDictationState();
-        _pasteTargetWindow = IntPtr.Zero;
-        _shouldPasteToActiveApp = false;
-        DictationStatus = "Dictation cancelled";
-        _toastNotificationService.ShowIdle(SelectedHotkey);
-    });
+        await CancelDictationAsync();
+    }).Task.Unwrap();
 }
-private async void HotkeyReleaseTimer_Tick(object? sender, EventArgs e)
+
+private async void ComputerUseVoice_Click(object sender, RoutedEventArgs e)
 {
-    _hotkeyReleaseTimer.Stop();
-    if (!_awaitingHandsFreeSecondTap || _isHandsFreeDictationLocked)
+    if (_computerUseVoiceCaptureActive)
+    {
+        await StopComputerUseVoiceCaptureAndRunAsync();
+        return;
+    }
+    await StartComputerUseVoiceCaptureAsync();
+}
+
+private async Task StartComputerUseVoiceCaptureAsync()
+{
+    var configurationReady = ComputerUseConfigurationIsReady(out var error);
+    if (!ComputerUseEnabled || !configurationReady)
+    {
+        ComputerUseStatusText = error.Length == 0 ? "Enable Computer Use before starting a planner session." : error;
+        return;
+    }
+    if (_computerUseIsRunning || _dictationCoordinator.IsRecording || _dictationCoordinator.IsBusy || _isMeetingRecording)
+    {
+        ComputerUseStatusText = "Finish the active recording or planner operation first.";
+        return;
+    }
+
+    _computerUseApprovedTarget = null;
+    _computerUsePlannerService = CreateComputerUsePlannerService();
+    _computerUseActivationToken = _computerUsePlannerService.BeginExplicitVoicePlannerActivation();
+    _computerUseCancellation?.Dispose();
+    _computerUseCancellation = CancellationTokenSource.CreateLinkedTokenSource(_applicationShutdownCancellation.Token);
+    try
+    {
+        await _dictationCoordinator.StartAsync(SelectedMicrophone);
+        _computerUseVoiceCaptureActive = _dictationCoordinator.IsRecording;
+        NotifyComputerUseActivityChanged();
+        if (!_computerUseVoiceCaptureActive)
+        {
+            throw new InvalidOperationException("The microphone did not enter the recording state.");
+        }
+        ComputerUseStatusText = "Planner listening. Focus an allowed target app, then use the floating stop control.";
+        _toastNotificationService.Show("Computer Use listening", "Focus an allowed app, then click the square to plan", ToastState.Recording, 0);
+        WindowState = WindowState.Minimized;
+    }
+    catch (Exception exception)
+    {
+        ResetComputerUseSession();
+        ComputerUseStatusText = $"Could not start planner voice capture ({exception.GetType().Name}).";
+        _logService.Info("Computer Use voice capture could not start; commandLogged=false.");
+        _toastNotificationService.Show("Computer Use unavailable", "Voice capture could not start", ToastState.Error, 4200);
+    }
+}
+
+private async Task StopComputerUseVoiceCaptureAndRunAsync()
+{
+    if (!_computerUseVoiceCaptureActive || _computerUsePlannerService is null || _computerUseActivationToken is null)
+        return;
+
+    // Capture only the single foreground target selected by the user while Muesli is minimized.
+    // No clipboard, window enumeration, title, or field value is acquired here.
+    var targetHandle = _activeAppPasteService.CaptureForegroundWindow();
+    var targetInfo = _activeAppPasteService.DescribeWindow(targetHandle);
+    var applicationId = targetInfo.ProcessName?.Trim().ToLowerInvariant() ?? "";
+    var allowedApplicationsAtSelection = ParseAllowlist(ComputerUseAllowedApplications);
+    var targetWasAllowlistedAtSelection = targetHandle != IntPtr.Zero && applicationId.Length > 0 &&
+        allowedApplicationsAtSelection.Contains(applicationId, StringComparer.OrdinalIgnoreCase);
+    ComputerUseWindowTarget? capturedTarget = null;
+    var targetIdentityCapturedAtSelection = targetWasAllowlistedAtSelection &&
+        ComputerUseWindowTarget.TryCapture(targetHandle, applicationId, targetInfo.ProcessId, out capturedTarget);
+    _computerUseVoiceCaptureActive = false;
+    _computerUseIsRunning = true;
+    NotifyComputerUseActivityChanged();
+
+    try
+    {
+        ComputerUseStatusText = "Transcribing the explicit planner command locally.";
+        _toastNotificationService.Show("Computer Use", "Transcribing the explicit command", ToastState.Transcribing, 0);
+        var stopResult = await _dictationCoordinator.StopAsync(
+            $"computer-use-{Guid.NewGuid():N}",
+            _computerUseCancellation?.Token ?? _applicationShutdownCancellation.Token);
+        var transcript = stopResult.Transcription.Text?.Trim() ?? "";
+        if (transcript.Length == 0)
+        {
+            ComputerUseStatusText = "No planner command was detected; nothing was executed.";
+            return;
+        }
+        if (!targetWasAllowlistedAtSelection)
+        {
+            ComputerUseStatusText = "The selected foreground application is not allowlisted; nothing was sent to the planner.";
+            return;
+        }
+        if (!targetIdentityCapturedAtSelection || capturedTarget is null || !capturedTarget.IsCurrentOwner())
+        {
+            ComputerUseStatusText = "The selected application window changed before it could be approved; nothing was sent to the planner.";
+            return;
+        }
+        _computerUseApprovedTarget = capturedTarget;
+        if (!_computerUsePlannerService.TryCreateExplicitVoiceCommand(_computerUseActivationToken, transcript, out var command) || command is null)
+        {
+            ComputerUseStatusText = "The explicit planner activation expired or was already consumed; nothing was executed.";
+            return;
+        }
+
+        ComputerUseStatusText = "Planning from the approved foreground window.";
+        var result = await _computerUsePlannerService.RunAsync(
+            command,
+            CurrentComputerUseOptions(),
+            _computerUseCancellation?.Token ?? _applicationShutdownCancellation.Token);
+        try
+        {
+            _computerUseTraceStore.Append(ComputerUseTracePath(), result);
+        }
+        catch (Exception)
+        {
+            _logService.Info($"Computer Use trace persistence failed. run={result.RunId}; commandLogged=false; valuesLogged=false.");
+        }
+        ComputerUseStatusText = DescribeComputerUseResult(result);
+        _logService.Info($"Computer Use completed. run={result.RunId}; status={result.Status}; actions={result.Trace.Count}; commandLogged=false; valuesLogged=false.");
+    }
+    catch (OperationCanceledException)
+    {
+        ComputerUseStatusText = "Computer Use was stopped; no further actions were sent.";
+    }
+    catch (Exception exception)
+    {
+        ComputerUseStatusText = $"Computer Use failed safely ({exception.GetType().Name}); no further actions were sent.";
+        _logService.Info("Computer Use failed safely; commandLogged=false; valuesLogged=false.");
+    }
+    finally
+    {
+        ResetComputerUseSession();
+        _toastNotificationService.ShowIdle(SelectedHotkey);
+        if (IsVisible)
+        {
+            WindowState = WindowState.Normal;
+            Activate();
+        }
+    }
+}
+
+private async void StopComputerUse_Click(object sender, RoutedEventArgs e) => await CancelComputerUseAsync();
+
+private async Task CancelComputerUseAsync()
+{
+    _computerUseCancellation?.Cancel();
+    if (_computerUseVoiceCaptureActive && _dictationCoordinator.IsRecording && !_dictationCoordinator.IsBusy)
+    {
+        await _dictationCoordinator.CancelAsync();
+    }
+    ResetComputerUseSession();
+    ComputerUseStatusText = "Computer Use stopped; the planner session was discarded.";
+    _toastNotificationService.ShowIdle(SelectedHotkey);
+}
+
+private void OpenComputerUseDiagnostics_Click(object sender, RoutedEventArgs e)
+{
+    var document = _computerUseTraceStore.Load(ComputerUseTracePath());
+    var rows = document.Runs.Count == 0
+        ? "No Computer Use runs are recorded."
+        : string.Join(Environment.NewLine, document.Runs.Reverse().Take(20).Select(run =>
+            $"{run.CompletedAtUtc.LocalDateTime:g}  {run.Status}  actions={run.Actions.Count}  run={run.RunId}"));
+    System.Windows.MessageBox.Show(
+        $"Schema: {document.SchemaVersion}\nStored runs: {document.Runs.Count}\n\n{rows}\n\nCommands, typed values, titles, URLs, element names, screenshots, provider bodies, and errors are never stored.",
+        "Computer Use diagnostics",
+        MessageBoxButton.OK,
+        MessageBoxImage.Information);
+}
+
+private void ResetComputerUseSession()
+{
+    _computerUseVoiceCaptureActive = false;
+    _computerUseIsRunning = false;
+    _computerUseActivationToken = null;
+    _computerUsePlannerService = null;
+    _computerUseApprovedTarget = null;
+    _computerUseCancellation?.Dispose();
+    _computerUseCancellation = null;
+    NotifyComputerUseActivityChanged();
+}
+
+private void NotifyComputerUseActivityChanged()
+{
+    OnPropertyChanged(nameof(ComputerUseVoiceButtonText));
+    OnPropertyChanged(nameof(ComputerUseStopEnabled));
+}
+
+private async Task CancelMeetingRecordingAsync()
+{
+    StopMeetingAutoStopMonitor();
+    _meetingOperationCancellation?.Cancel();
+    await _meetingRecordingCoordinator.CancelAsync();
+    _currentMeetingTitle = null;
+    _isMeetingRecording = false;
+    _liveTranscriptWindow?.Hide();
+    _meetingAutoStopTracker = null;
+    OnPropertyChanged(nameof(MeetingRecordingButtonText));
+    DictationStatus = "Meeting recording cancelled";
+    _toastNotificationService.ShowIdle(SelectedHotkey);
+    RefreshRecoverableMeetingSessions();
+}
+
+private async Task CancelDictationAsync()
+{
+    if (_computerUseVoiceCaptureActive || _computerUseIsRunning)
+    {
+        await CancelComputerUseAsync();
+        return;
+    }
+    var operationCancellation = _dictationOperationCancellation;
+    var hadRecording = _dictationCoordinator.IsRecording;
+    if (operationCancellation is not null)
+    {
+        operationCancellation.Cancel();
+    }
+
+    if (_dictationCoordinator.IsRecording && !_dictationCoordinator.IsBusy)
+    {
+        await _dictationCoordinator.CancelAsync();
+    }
+
+    if (operationCancellation is null && !hadRecording)
     {
         return;
     }
 
-    _awaitingHandsFreeSecondTap = false;
-    await StopDictationAsync();
+    ResetHotkeyDictationState();
+    _pasteTargetWindow = IntPtr.Zero;
+    _pasteTargetInfo = PasteTargetInfo.Unknown;
+    _shouldPasteToActiveApp = false;
+    DictationStatus = "Dictation cancelled";
+    _toastNotificationService.ShowIdle(SelectedHotkey);
+}
+
+private void CompleteDictationOperationCancellation(CancellationTokenSource cancellation)
+{
+    if (ReferenceEquals(_dictationOperationCancellation, cancellation))
+    {
+        _dictationOperationCancellation = null;
+    }
+    cancellation.Dispose();
+}
+
+private async void HotkeyReleaseTimer_Tick(object? sender, EventArgs e)
+{
+    _hotkeyReleaseTimer.Stop();
+    await ExecuteHotkeyActionAsync(_dictationHotkeyState.DoubleTapWindowElapsed());
 }
 private void ResetHotkeyDictationState()
 {
     _hotkeyReleaseTimer.Stop();
-    _awaitingHandsFreeSecondTap = false;
-    _isHandsFreeDictationLocked = false;
+    _dictationHotkeyState.Reset();
 }
+
+private void OnDictationDeviceListChanged(object? sender, EventArgs e)
+{
+    Dispatcher.BeginInvoke(() =>
+    {
+        var selected = SelectedMicrophone;
+        var devices = _dictationCoordinator.ListMicrophones();
+        MicrophoneDevices.Clear();
+        foreach (var device in devices)
+        {
+            MicrophoneDevices.Add(device);
+        }
+        if (!string.IsNullOrWhiteSpace(selected) && !MicrophoneDevices.Contains(selected))
+        {
+            MicrophoneDevices.Add(selected);
+        }
+        _selectedMicrophone = selected ?? AudioCaptureService.SystemDefaultMicrophone;
+        OnPropertyChanged(nameof(SelectedMicrophone));
+    });
+}
+
+private void OnDictationRouteChanged(object? sender, AudioRouteChangedEventArgs e)
+{
+    Dispatcher.BeginInvoke(() =>
+    {
+        DictationStatus = e.Message;
+        if (e.Kind == AudioRouteChangeKind.Failed)
+        {
+            _logService.Error(
+                $"Dictation microphone route recovery failed. previous={TraceValue(e.PreviousDevice)}; current={TraceValue(e.CurrentDevice)}",
+                e.Exception ?? new InvalidOperationException(e.Message));
+            _toastNotificationService.Show("Microphone disconnected", "Recording stopped; release the shortcut to recover captured audio", ToastState.Error, 0);
+            return;
+        }
+
+        _logService.Info(
+            $"Dictation microphone route changed. kind={e.Kind}; previous={TraceValue(e.PreviousDevice)}; current={TraceValue(e.CurrentDevice)}");
+        _toastNotificationService.Show("Microphone route changed", e.Message, ToastState.Recording, 0);
+    });
+}
+
+private void OnDictationLevelChanged(object? sender, AudioLevelEventArgs e) =>
+    _toastNotificationService.UpdateRecordingLevel(e.Peak);
+
 private async void TestMic_Click(object sender, RoutedEventArgs e)
 {
     if (_dictationCoordinator.IsBusy || _dictationCoordinator.IsRecording)
@@ -1462,7 +2743,7 @@ private async void TestMic_Click(object sender, RoutedEventArgs e)
         _toastNotificationService.Show("Testing microphone", SelectedMicrophone ?? "Selected microphone", ToastState.Recording, 0);
         await _dictationCoordinator.StartAsync(SelectedMicrophone);
         await Task.Delay(2000);
-        var result = await _dictationCoordinator.StopAsync(new TranscriptionOptions(SelectedAsrEngine, SelectedModelProfile));
+        var result = await _dictationCoordinator.StopAsync();
         var diagnostic = FirstDiagnosticLine(result.Diagnostic);
         DictationStatus = string.IsNullOrWhiteSpace(diagnostic) ? "Mic test completed" : diagnostic;
         _toastNotificationService.Show("Mic test completed", DictationStatus, ToastState.Success, 3600);
@@ -1516,7 +2797,7 @@ private void DeleteDictation_Click(object sender, RoutedEventArgs e)
     if (sender is FrameworkElement { DataContext: DictationItem item })
     {
         Dictations.Remove(item);
-        SaveDictations();
+        SaveDictations(afterExplicitDeletion: true);
         OnPropertyChanged(nameof(DayStreak));
         OnPropertyChanged(nameof(WordsDictated));
         OnPropertyChanged(nameof(WordsDictatedDisplay));
@@ -1557,7 +2838,10 @@ private void OpenMeetingDetail(MeetingItem item)
     BuildSpeakerAliasPanel();
     BuildMeetingWarningsPanel(item);
     BuildMeetingNotesContent();
+    RefreshMeetingPlaybackTracks(item);
     OnPropertyChanged(nameof(SelectedMeetingTitle));
+    OnPropertyChanged(nameof(SelectedMeetingTitleOwnership));
+    OnPropertyChanged(nameof(SelectedMeetingManualNotes));
     OnPropertyChanged(nameof(SelectedMeetingMetadata));
     OnPropertyChanged(nameof(SelectedMeetingNotes));
     OnPropertyChanged(nameof(SelectedMeetingTemplate));
@@ -1572,40 +2856,45 @@ private void OpenMeetingDetail(MeetingItem item)
 }
 private void OpenMeetingAudio(MeetingItem item)
 {
-    var firstPath = item.SourcePath
-        .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-        .FirstOrDefault();
-    if (string.IsNullOrWhiteSpace(firstPath) || !System.IO.File.Exists(firstPath))
+    OpenMeetingDetail(item);
+    if (!HasMeetingPlayback)
     {
         DictationStatus = "Meeting audio file not found";
         _toastNotificationService.Show("Audio not found", item.Title, ToastState.Error);
         return;
     }
-    Process.Start(new ProcessStartInfo
-    {
-        FileName = firstPath,
-        UseShellExecute = true
-    });
-}
-private static void DeleteFileIfExists(string? path)
-{
-    if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path))
-    {
-        return;
-    }
-    try
-    {
-        System.IO.File.Delete(path);
-    }
-    catch
-    {
-        // Recording retention is optional; failed cleanup should not block saving the meeting transcript.
-    }
+    ShowPage(MeetingsPage, MeetingsNav);
+    DictationStatus = "Meeting recording ready to play";
 }
 private void DeleteMeeting(MeetingItem item)
 {
+    var audioPaths = item.SourcePath
+        .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        .Where(path => _captureStorageService.IsOwnedMeetingAudioPath(item.Id, path))
+        .ToList();
+    if (audioPaths.Count > 0)
+    {
+        var choice = System.Windows.MessageBox.Show(
+            "Delete the audio files saved for this meeting too?\n\nYes deletes this meeting's owned recordings. No keeps the audio files. Imported media is never deleted.",
+            "Delete meeting",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Warning);
+        if (choice == MessageBoxResult.Cancel)
+        {
+            return;
+        }
+        if (choice == MessageBoxResult.Yes)
+        {
+            var cleanup = _captureStorageService.DeleteOwnedMeetingAudio(item.Id, audioPaths);
+            if (cleanup.FailedPaths.Count > 0)
+            {
+                _logService.Info($"Meeting removed, but {cleanup.FailedPaths.Count} owned audio file(s) could not be deleted.");
+            }
+        }
+    }
+
     Meetings.Remove(item);
-    SaveMeetings();
+    SaveMeetings(afterExplicitDeletion: true);
     RefreshMeetingViews();
     RefreshSearchResults();
     DictationStatus = "Deleted meeting";
@@ -1628,6 +2917,8 @@ private void OpenMeetingDetail_Click(object sender, RoutedEventArgs e)
 private void BackToMeetings_Click(object sender, RoutedEventArgs e)
 {
     SaveActiveSpeakerAliases();
+    _meetingPlaybackTimer.Stop();
+    _meetingPlaybackService.Close();
     _selectedMeeting = null;
     _selectedMeetingTemplate = NormalizeSummaryTemplateName(SelectedSummaryTemplate);
     MeetingsBrowserView.Visibility = Visibility.Visible;
@@ -2018,11 +3309,15 @@ private async Task GenerateSelectedMeetingNotesAsync()
         }
     }
 
+    _summaryCancellation?.Dispose();
+    _summaryCancellation = new CancellationTokenSource();
+    var summaryToken = _summaryCancellation.Token;
+    IsSummarizing = true;
     try
     {
         DictationStatus = "Generating meeting notes";
         _toastNotificationService.Show("Generating notes", SelectedMeetingTemplate, ToastState.Transcribing, 0);
-        var summary = await MeetingSummaryService.CreateSummaryAsync(
+        var summary = await CreateMeetingSummaryWithSettingsAsync(
             _selectedMeeting.Transcript,
             _selectedMeeting.Title,
             CurrentSettingsSnapshot() with
@@ -2030,7 +3325,8 @@ private async Task GenerateSelectedMeetingNotesAsync()
                 MeetingSummaryTemplate = SelectedMeetingTemplate,
                 MeetingSummaryPromptOverride = CustomMeetingTemplates.FirstOrDefault(template =>
                     template.Name.Equals(SelectedMeetingTemplate, StringComparison.OrdinalIgnoreCase))?.Prompt ?? ""
-            });
+            },
+            summaryToken);
 
         var index = Meetings.IndexOf(_selectedMeeting);
         if (index < 0)
@@ -2038,10 +3334,14 @@ private async Task GenerateSelectedMeetingNotesAsync()
             return;
         }
 
+        // Regeneration replaces generated notes only. Manual notes and a manually chosen title are
+        // the user's own writing and are carried across untouched.
         var updated = _selectedMeeting with
         {
             Summary = summary,
-            TemplateName = SelectedMeetingTemplate
+            TemplateName = SelectedMeetingTemplate,
+            ManualNotes = _selectedMeeting.ManualNotes,
+            TitleIsManual = _selectedMeeting.TitleIsManual
         };
         Meetings[index] = updated;
         _selectedMeeting = updated;
@@ -2051,13 +3351,28 @@ private async Task GenerateSelectedMeetingNotesAsync()
         BuildMeetingNotesContent();
         OnPropertyChanged(nameof(SelectedMeetingNotes));
         OnPropertyChanged(nameof(SelectedMeetingNotesActionLabel));
-        DictationStatus = "Meeting notes ready";
-        _toastNotificationService.Show("Notes ready", updated.Title, ToastState.Success, 2800);
+        if (!_lastSummaryUsedLocalFallback)
+        {
+            DictationStatus = "Meeting notes ready";
+            _toastNotificationService.Show("Notes ready", updated.Title, ToastState.Success, 2800);
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Cancelling must leave the existing notes exactly as they were.
+        DictationStatus = "Notes generation cancelled; existing notes are unchanged";
+        _toastNotificationService.Show("Cancelled", "Existing notes were left unchanged", ToastState.Idle, 2600);
     }
     catch (Exception exception)
     {
+        _summaryRetryAvailable = true;
         DictationStatus = $"Notes generation failed: {exception.Message}";
-        _toastNotificationService.Show("Notes generation failed", exception.Message, ToastState.Error, 4200);
+        _toastNotificationService.Show("Notes generation failed", $"{exception.Message} · use Retry", ToastState.Error, 4200);
+        OnPropertyChanged(nameof(CanRetrySummary));
+    }
+    finally
+    {
+        IsSummarizing = false;
     }
 }
 
@@ -2070,26 +3385,79 @@ private void MoreMeetingActions_Click(object sender, RoutedEventArgs e)
         button.ContextMenu.IsOpen = true;
     }
 }
-private void ExportMeetingNotes_Click(object sender, RoutedEventArgs e)
+private void ExportMeetingNotes_Click(object sender, RoutedEventArgs e) => RunExport(MeetingExportMode.Notes);
+private void ExportMeetingTranscript_Click(object sender, RoutedEventArgs e) => RunExport(MeetingExportMode.Transcript);
+private void ExportFullMeeting_Click(object sender, RoutedEventArgs e) => RunExport(MeetingExportMode.FullMeeting);
+
+private void ShowMeetingAutomationDiagnostics_Click(object sender, RoutedEventArgs e)
 {
-    if (_selectedMeeting is not null)
+    var result = _selectedMeeting?.AutomationResult;
+    if (result is null)
     {
-        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Notes, _activeSpeakerAliases);
+        System.Windows.MessageBox.Show(
+            this,
+            "No post-meeting automation result is recorded. Existing meetings are never run retroactively.",
+            "Automation diagnostics",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+        return;
     }
+
+    var lines = new List<string>
+    {
+        $"Status: {result.Status}",
+        $"Started: {result.StartedAtUtc:u}",
+        $"Finished: {result.CompletedAtUtc:u}",
+        $"Attempts: {result.Attempts}",
+        $"Exit code: {result.ExitCode?.ToString() ?? "none"}",
+        $"Markdown export: {(result.Export.Completed ? "completed" : result.Export.Requested ? "failed" : "not requested")}",
+        $"Destination ownership: {result.Export.DestinationOwnership}"
+    };
+    if (!string.IsNullOrWhiteSpace(result.Export.DestinationPath)) lines.Add($"Export path: {result.Export.DestinationPath}");
+    if (!string.IsNullOrWhiteSpace(result.Error)) lines.Add($"Result: {result.Error}");
+    if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+        lines.Add($"\nstdout{(result.StandardOutputTruncated ? " (truncated)" : "")}\n{result.StandardOutput}");
+    if (!string.IsNullOrWhiteSpace(result.StandardError))
+        lines.Add($"\nstderr{(result.StandardErrorTruncated ? " (truncated)" : "")}\n{result.StandardError}");
+
+    System.Windows.MessageBox.Show(
+        this,
+        string.Join(Environment.NewLine, lines),
+        "Automation diagnostics",
+        MessageBoxButton.OK,
+        result.Completed ? MessageBoxImage.Information : MessageBoxImage.Warning);
 }
-private void ExportMeetingTranscript_Click(object sender, RoutedEventArgs e)
+
+/// <summary>
+/// Exports and reports the outcome. Export only reads the saved meeting, so a failure cannot
+/// corrupt it, but it must never fail silently either.
+/// </summary>
+private void RunExport(MeetingExportMode mode)
 {
-    if (_selectedMeeting is not null)
+    if (_selectedMeeting is null) return;
+    var result = MeetingExporter.Export(_selectedMeeting, mode, _activeSpeakerAliases);
+    if (result is { Completed: false, Error: null })
     {
-        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.Transcript, _activeSpeakerAliases);
+        return;
     }
-}
-private void ExportFullMeeting_Click(object sender, RoutedEventArgs e)
-{
-    if (_selectedMeeting is not null)
+    if (!result.Completed)
     {
-        MeetingExporter.Export(_selectedMeeting, MeetingExportMode.FullMeeting, _activeSpeakerAliases);
+        DictationStatus = $"Export failed: {result.Error}";
+        _logService.Info($"Meeting export failed. mode={mode}; transcriptLogged=false");
+        _toastNotificationService.Show("Export failed", result.Error ?? "Unknown error", ToastState.Error, 4600);
+        System.Windows.MessageBox.Show(
+            $"The export could not be written.\n\n{result.Error}\n\nYour saved meeting is unchanged.",
+            "Export failed",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+        return;
     }
+    DictationStatus = result.Error is null ? "Export ready" : result.Error;
+    _toastNotificationService.Show(
+        result.Error is null ? "Exported" : "Exported with a warning",
+        System.IO.Path.GetFileName(result.Path) ?? "",
+        result.Error is null ? ToastState.Success : ToastState.Error,
+        3200);
 }
 private void CopySelectedMeetingNotes_Click(object sender, RoutedEventArgs e)
 {
@@ -2199,64 +3567,167 @@ private void MoveMeetingToFolder_Click(object sender, RoutedEventArgs e)
 }
 private async void ImportMeeting_Click(object sender, RoutedEventArgs e)
 {
+    // The button is disabled while an import runs; this guards the keyboard and automation paths.
+    if (IsImportingMeeting)
+    {
+        return;
+    }
     var dialog = new Microsoft.Win32.OpenFileDialog
     {
         Title = "Import meeting audio or video",
-        Filter = "Media files|*.wav;*.mp3;*.m4a;*.aac;*.mp4;*.mov;*.mkv;*.webm;*.ogg|All files|*.*"
+        // Only formats whose decode path is actually qualified; "All files" is kept so a user can
+        // still pick anything, and then gets explicit conversion guidance instead of a decode crash.
+        Filter = $"{MediaImportFormats.DialogFilter}|All files|*.*"
     };
     if (dialog.ShowDialog(this) != true)
     {
         return;
     }
+    if (!MediaImportFormats.IsSupported(dialog.FileName))
+    {
+        var guidance = MediaImportFormats.ConversionGuidanceFor(dialog.FileName);
+        DictationStatus = "Unsupported media format";
+        _logService.Info($"Import rejected before decode. extension={System.IO.Path.GetExtension(dialog.FileName)}");
+        System.Windows.MessageBox.Show(guidance, "Cannot import this file", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return;
+    }
+    var displayName = System.IO.Path.GetFileNameWithoutExtension(dialog.FileName);
+    _importCancellation?.Dispose();
+    _importCancellation = new CancellationTokenSource();
+    var importToken = _importCancellation.Token;
+    IsImportingMeeting = true;
+    ReportImportProgress(MeetingImportStage.Preparing, null);
+
+    // Set once the transcript exists. Cancelling after that point keeps the transcript rather than
+    // throwing away inference the user already waited for.
+    string? recoveredTranscript = null;
+    TranscriptionResult? recoveredResult = null;
     try
     {
         DictationStatus = "Transcribing meeting";
         _toastNotificationService.Show("Transcribing meeting", System.IO.Path.GetFileName(dialog.FileName), ToastState.Transcribing, 0);
+        // Progress created on the UI thread, so reports marshal back here off the worker.
+        var progress = new Progress<TranscriptionProgress>(report =>
+            ReportImportProgress(MeetingImportProgressMapper.From(report.Stage), report.Fraction));
         var result = await _meetingTranscriptionClient.TranscribeFileAsync(
-            System.IO.Path.GetFileNameWithoutExtension(dialog.FileName),
+            displayName,
             dialog.FileName,
-            new TranscriptionOptions(SelectedAsrEngine, SelectedModelProfile));
-        var transcript = DictionaryCorrectionService.Apply(result.Text, DictionaryEntries.Select(entry => entry.Record));
-        transcript = await PostProcessIfEnabledAsync(transcript, "meeting import", _meetingTranscriptionClient.PostProcessAsync);
+            progress,
+            importToken);
+        _transcriptionPipelineService.LogTranscriptionResult(
+            "imported media", result, _meetingTranscriptionClient.EngineId, _meetingTranscriptionClient.ModelId);
+        ReportImportProgress(MeetingImportStage.CleaningUp, null);
+        var transcript = await _transcriptionPipelineService.PrepareImportedTranscriptAsync(
+            result.Text,
+            EnableLocalCleanup,
+            DictionaryEntries.Select(entry => entry.Record),
+            importToken);
         if (string.IsNullOrWhiteSpace(transcript))
         {
             DictationStatus = "No speech detected in imported meeting";
             _toastNotificationService.Show("No speech detected", System.IO.Path.GetFileName(dialog.FileName), ToastState.Error, 3600);
             return;
         }
-        var summary = await CreateMeetingSummaryAsync(transcript, System.IO.Path.GetFileNameWithoutExtension(dialog.FileName));
-        var wordCount = CountWords(transcript);
-        var meeting = new MeetingItem(
-            $"meet_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
-            System.IO.Path.GetFileNameWithoutExtension(dialog.FileName),
-            DateTime.Now,
-            transcript,
-            summary,
-            dialog.FileName,
-            SelectedModelProfile,
-            result.DurationMs,
-            _selectedMeetingFolderId,
-            wordCount,
-            SelectedSummaryTemplate);
-        Meetings.Insert(0, meeting);
-        SaveMeetings();
-        RefreshMeetingViews();
-        RefreshSearchResults();
-        DictationStatus = "Meeting transcribed";
-        _toastNotificationService.Show("Meeting ready", meeting.Title, ToastState.Success);
+        recoveredTranscript = transcript;
+        recoveredResult = result;
+        ReportImportProgress(MeetingImportStage.GeneratingNotes, null);
+        var summary = await CreateMeetingSummaryAsync(transcript, displayName, importToken);
+        SaveImportedMeeting(dialog.FileName, displayName, transcript, summary, result.DurationMs);
+        if (!_lastSummaryUsedLocalFallback)
+        {
+            DictationStatus = "Meeting transcribed";
+            _toastNotificationService.Show("Meeting ready", displayName, ToastState.Success);
+        }
         ShowPage(MeetingsPage, MeetingsNav);
+    }
+    catch (OperationCanceledException)
+    {
+        // Cancelling before a transcript exists leaves nothing behind. Cancelling once one exists
+        // keeps it: discarding a finished transcript because notes were interrupted would destroy
+        // the expensive half of the work. The source file is never touched either way.
+        if (recoveredTranscript is not null)
+        {
+            SaveImportedMeeting(
+                dialog.FileName,
+                displayName,
+                recoveredTranscript,
+                summary: "",
+                recoveredResult?.DurationMs ?? 0);
+            DictationStatus = "Import cancelled during notes; the transcript was saved";
+            _logService.Info("Import cancelled after transcription; transcript retained without notes.");
+            _toastNotificationService.Show(
+                "Transcript saved",
+                "Notes were cancelled — use Generate Notes when ready",
+                ToastState.Idle,
+                4200);
+            ShowPage(MeetingsPage, MeetingsNav);
+        }
+        else
+        {
+            DictationStatus = "Import cancelled; nothing was saved";
+            _logService.Info("Import cancelled before a transcript existed; no meeting created.");
+            _toastNotificationService.Show(
+                "Import cancelled",
+                "Your original file is unchanged",
+                ToastState.Idle,
+                2600);
+        }
     }
     catch (Exception exception)
     {
         DictationStatus = $"Meeting import failed: {exception.Message}";
         _toastNotificationService.Show("Meeting import failed", exception.Message, ToastState.Error, 4200);
     }
+    finally
+    {
+        IsImportingMeeting = false;
+        ImportProgressPercent = 0;
+        ImportProgressLabel = "";
+    }
+}
+
+/// <summary>
+/// Persists an imported meeting. The imported file is recorded as the source path only; it is
+/// never copied into the meeting directory and never becomes owned audio.
+/// </summary>
+private void SaveImportedMeeting(
+    string sourcePath,
+    string title,
+    string transcript,
+    string summary,
+    int durationMs)
+{
+    var meeting = new MeetingItem(
+        $"meet_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+        title,
+        DateTime.Now,
+        transcript,
+        summary,
+        sourcePath,
+        _meetingTranscriptionClient.ModelId,
+        durationMs,
+        _selectedMeetingFolderId,
+        CountWords(transcript),
+        SelectedSummaryTemplate,
+        FinalTranscriptOwnerModelId: _meetingTranscriptionClient.ModelId);
+    Meetings.Insert(0, meeting);
+    try
+    {
+        SaveMeetings();
+    }
+    catch
+    {
+        Meetings.Remove(meeting);
+        throw;
+    }
+    RefreshMeetingViews();
+    RefreshSearchResults();
 }
 private async void ToggleMeetingRecording_Click(object sender, RoutedEventArgs e)
 {
     await ToggleMeetingRecordingAsync(null);
 }
-private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
+private async Task ToggleMeetingRecordingAsync(DetectedMeeting? detectedMeeting)
 {
     if (_meetingRecordingCoordinator.IsBusy)
     {
@@ -2266,19 +3737,53 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
     {
         try
         {
-            DictationStatus = "Recording meeting";
-            _toastNotificationService.Show("Recording meeting", "Capturing microphone and system audio", ToastState.Recording, 0);
-            await _meetingRecordingCoordinator.StartAsync(SelectedMicrophone);
-            _currentMeetingTitle = detectedTitle;
-            _isMeetingRecording = true;
+            _meetingOperationCancellation?.Dispose();
+            _meetingOperationCancellation = new CancellationTokenSource();
+            DictationStatus = "Preparing meeting capture";
+            _toastNotificationService.Show("Preparing meeting", "Starting microphone and meeting audio", ToastState.Transcribing, 0);
+            var start = await _meetingRecordingCoordinator.StartAsync(
+                SelectedMicrophone,
+                detectedMeeting?.Title,
+                SaveMeetingRecordings,
+                detectedMeeting?.ProcessId,
+                _meetingOperationCancellation.Token,
+                SelectedLiveMeetingModel.Id is { } liveModelId
+                    ? new LiveTranscriptionConfiguration(liveModelId, SelectedOwnershipMode, ShowLiveWaveformOnHover)
+                    : null);
+            _currentMeetingTitle = detectedMeeting?.Title;
+            _isMeetingRecording = start.State is MeetingSessionState.Recording or MeetingSessionState.DegradedRecording;
+            _meetingAutoStopTracker = new MeetingAutoStopTracker(
+                detectedMeeting is null
+                    ? MeetingRecordingStartOrigin.Manual
+                    : MeetingRecordingStartOrigin.DetectedMeeting,
+                detectedMeeting?.Key);
+            if (detectedMeeting is not null)
+            {
+                _meetingAutoStopTracker.Observe(detectedMeeting.Key, DateTimeOffset.UtcNow);
+            }
             StartMeetingAutoStopMonitor();
+            DictationStatus = start.State == MeetingSessionState.DegradedRecording
+                ? "Meeting recording started with a missing channel"
+                : "Recording meeting";
+            _toastNotificationService.Show(
+                start.State == MeetingSessionState.DegradedRecording ? "Recording degraded" : "Recording meeting",
+                start.Warning ?? (start.SystemCaptureMode == SystemAudioCaptureMode.ProcessTreeLoopback
+                    ? "Capturing microphone and the meeting process"
+                    : "Capturing microphone and default Windows output"),
+                start.State == MeetingSessionState.DegradedRecording ? ToastState.Error : ToastState.Recording,
+                start.State == MeetingSessionState.DegradedRecording ? 4200 : 0);
             OnPropertyChanged(nameof(MeetingRecordingButtonText));
             ShowPage(MeetingsPage, MeetingsNav);
+        }
+        catch (OperationCanceledException)
+        {
+            ResetMeetingRecordingUi("Meeting recording cancelled");
         }
         catch (Exception exception)
         {
             DictationStatus = $"Meeting recording failed: {exception.Message}";
             _toastNotificationService.Show("Meeting recording failed", exception.Message, ToastState.Error);
+            RefreshRecoverableMeetingSessions();
         }
         return;
     }
@@ -2292,48 +3797,39 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
         var title = string.IsNullOrWhiteSpace(_currentMeetingTitle)
             ? $"Meeting {DateTime.Now:yyyy-MM-dd HH-mm}"
             : _currentMeetingTitle;
+        _meetingOperationCancellation?.Dispose();
+        _meetingOperationCancellation = new CancellationTokenSource();
         var result = await _meetingRecordingCoordinator.StopAsync(
             title,
-            new TranscriptionOptions(SelectedAsrEngine, SelectedModelProfile));
+            SaveMeetingRecordings,
+            _meetingOperationCancellation.Token);
+        _liveTranscriptWindow?.Hide();
         _currentMeetingTitle = null;
-        var transcript = DictionaryCorrectionService.Apply(result.Transcript, DictionaryEntries.Select(entry => entry.Record));
-        transcript = await PostProcessIfEnabledAsync(transcript, "meeting", _meetingTranscriptionClient.PostProcessAsync);
-        if (string.IsNullOrWhiteSpace(transcript))
-        {
-            DictationStatus = "No speech detected in meeting";
-            _toastNotificationService.Show("No speech detected", "Meeting audio was captured but no transcript was produced", ToastState.Error, 4200);
-            return;
-        }
-        var summary = await CreateMeetingSummaryAsync(transcript, result.Title);
-        var sourceAudioPath = SaveMeetingRecordings
-            ? result.SystemAudioPath is null ? result.MicAudioPath : $"{result.MicAudioPath}; {result.SystemAudioPath}"
-            : "";
-        if (!SaveMeetingRecordings)
-        {
-            DeleteFileIfExists(result.MicAudioPath);
-            DeleteFileIfExists(result.SystemAudioPath);
-        }
-        var wordCount = CountWords(transcript);
-        var meeting = new MeetingItem(
-            $"meet_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
-            result.Title,
-            result.StartedAt,
-            transcript,
-            summary,
-            sourceAudioPath,
-            SelectedModelProfile,
-            result.DurationMs,
-            _selectedMeetingFolderId,
-            wordCount,
-            SelectedSummaryTemplate,
-            HealthWarnings: result.HealthWarnings ?? new List<string>());
-        Meetings.Insert(0, meeting);
-        SaveMeetings();
-        RefreshMeetingViews();
-        RefreshSearchResults();
-        DictationStatus = string.IsNullOrWhiteSpace(transcript) ? "Meeting saved with no detected speech" : "Meeting ready";
-        _toastNotificationService.Show("Meeting ready", meeting.Title, ToastState.Success);
+        var meeting = await PersistRecordedMeetingAsync(result);
+        DictationStatus = result.SessionState == MeetingSessionState.Completed
+            ? "Meeting ready"
+            : "Meeting audio saved; transcript needs recovery";
+        _toastNotificationService.Show(
+            result.SessionState == MeetingSessionState.Completed ? "Meeting ready" : "Meeting needs attention",
+            result.SessionState == MeetingSessionState.Completed ? meeting.Title : "Audio was retained without a final transcript",
+            result.SessionState == MeetingSessionState.Completed ? ToastState.Success : ToastState.Error,
+            result.SessionState == MeetingSessionState.Completed ? 2200 : 4200);
         ShowPage(MeetingsPage, MeetingsNav);
+    }
+    catch (OperationCanceledException)
+    {
+        RefreshRecoverableMeetingSessions();
+        ResetMeetingRecordingUi("Meeting finalization cancelled; audio retained for recovery");
+    }
+    catch (MeetingSessionRecoverableException)
+    {
+        RefreshRecoverableMeetingSessions();
+        ResetMeetingRecordingUi("Meeting finalization failed; audio retained for recovery");
+        _toastNotificationService.Show(
+            "Meeting retained for recovery",
+            "Use Recover interrupted in Meetings to retry",
+            ToastState.Error,
+            5200);
     }
     catch (Exception exception)
     {
@@ -2345,33 +3841,16 @@ private async Task ToggleMeetingRecordingAsync(string? detectedTitle)
         _toastNotificationService.Show("Meeting recording failed", exception.Message, ToastState.Error, 4200);
     }
 }
-private async void JoinAndRecordUpcoming_Click(object sender, RoutedEventArgs e)
-{
-    if (sender is FrameworkElement { DataContext: UpcomingMeetingItem item })
-    {
-        if (!string.IsNullOrWhiteSpace(item.MeetingUrl))
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(item.MeetingUrl) { UseShellExecute = true });
-        }
-        await ToggleMeetingRecordingAsync(item.Title);
-    }
-}
-private async void RecordOnlyUpcoming_Click(object sender, RoutedEventArgs e)
-{
-    if (sender is FrameworkElement { DataContext: UpcomingMeetingItem item })
-    {
-        await ToggleMeetingRecordingAsync(item.Title);
-    }
-}
 private void StartMeetingAutoStopMonitor()
 {
-    _meetingMissingScanCount = 0;
     _meetingAutoStopTimer.Stop();
-    _meetingAutoStopTimer.Start();
+    if (_meetingAutoStopTracker?.IsArmed == true)
+    {
+        _meetingAutoStopTimer.Start();
+    }
 }
 private void StopMeetingAutoStopMonitor()
 {
-    _meetingMissingScanCount = 0;
     _meetingAutoStopTimer.Stop();
 }
 private async void MeetingAutoStopTimer_Tick(object? sender, EventArgs e)
@@ -2387,17 +3866,14 @@ private async void MeetingAutoStopTimer_Tick(object? sender, EventArgs e)
         return;
     }
     var scan = _meetingDetectionService.CheckNow(publish: false);
-    if (scan.Found)
-    {
-        _meetingMissingScanCount = 0;
-        return;
-    }
-    _meetingMissingScanCount++;
-    if (_meetingMissingScanCount < 2 || _meetingRecordingCoordinator.IsBusy)
+    var shouldStop = _meetingAutoStopTracker?.Observe(
+        scan.DetectedMeeting?.Key,
+        DateTimeOffset.UtcNow) == true;
+    if (!shouldStop || _meetingRecordingCoordinator.IsBusy)
     {
         return;
     }
-    _logService.Info("Meeting window disappeared; stopping meeting recording automatically.");
+    _logService.Info("Qualified detected-meeting signal disappeared after the auto-stop grace period; stopping recording.");
     await ToggleMeetingRecordingAsync(null);
 }
 private void AliasSaveDebounceTimer_Tick(object? sender, EventArgs e)
@@ -2410,10 +3886,362 @@ private void ResetMeetingRecordingUi(string status)
     StopMeetingAutoStopMonitor();
     _currentMeetingTitle = null;
     _isMeetingRecording = false;
+    _liveTranscriptWindow?.Hide();
     OnPropertyChanged(nameof(MeetingRecordingButtonText));
     DictationStatus = status;
     _toastNotificationService.ShowIdle(SelectedHotkey);
 }
+
+private async Task<MeetingItem> PersistRecordedMeetingAsync(RecordedMeetingResult result)
+{
+    var transcript = string.IsNullOrWhiteSpace(result.Transcript)
+        ? ""
+        : await _transcriptionPipelineService.PrepareMeetingTranscriptAsync(
+            result.Transcript,
+            EnableLocalCleanup,
+            DictionaryEntries.Select(entry => entry.Record));
+    var summary = string.IsNullOrWhiteSpace(transcript)
+        ? ""
+        : await CreateMeetingSummaryAsync(transcript, result.Title);
+    var sourceAudioPath = string.Join(
+        "; ",
+        new[] { result.MicAudioPath, result.SystemAudioPath }
+            .Where(path => !string.IsNullOrWhiteSpace(path)));
+    var meeting = new MeetingItem(
+        result.MeetingId,
+        result.Title,
+        result.StartedAt,
+        transcript,
+        summary,
+        sourceAudioPath,
+        _meetingTranscriptionClient.ModelId,
+        result.DurationMs,
+        _selectedMeetingFolderId,
+        CountWords(transcript),
+        SelectedSummaryTemplate,
+        HealthWarnings: result.HealthWarnings ?? [],
+        SessionState: result.SessionState,
+        MicrophoneAudioPath: result.MicAudioPath,
+        SystemAudioPath: result.SystemAudioPath,
+        SystemCaptureMode: result.SystemCaptureMode,
+        RecoveredFromInterruption: result.RecoveredFromInterruption,
+        LivePreviewModelId: result.LivePreviewModelId,
+        LiveTranscriptOwnership: result.LiveTranscriptOwnership,
+        FinalTranscriptOwnerModelId: result.FinalTranscriptOwnerModelId,
+        GapRecoveryModelId: result.GapRecoveryModelId);
+    Meetings.Insert(0, meeting);
+    try
+    {
+        SaveMeetings();
+    }
+    catch
+    {
+        Meetings.Remove(meeting);
+        throw;
+    }
+    _meetingRecordingCoordinator.AcknowledgePersisted(result.MeetingId);
+    RefreshMeetingViews();
+    RefreshSearchResults();
+    RefreshRecoverableMeetingSessions();
+    if (result.SessionState == MeetingSessionState.Completed)
+    {
+        meeting = await RunPostMeetingAutomationAsync(
+            meeting,
+            result.RecoveredFromInterruption
+                ? PostMeetingCompletionEvent.RecoveryCompleted
+                : PostMeetingCompletionEvent.RecordingCompleted);
+    }
+    return meeting;
+}
+
+private async Task<MeetingItem> RunPostMeetingAutomationAsync(
+    MeetingItem meeting,
+    PostMeetingCompletionEvent completionEvent)
+{
+    PostMeetingAutomationResult result;
+    try
+    {
+        PostMeetingAutomationStatusText = PostMeetingHookEnabled || AutoExportMarkdownEnabled
+            ? "Running post-meeting automation…"
+            : "Automation is disabled; the meeting was saved without launching a process or writing an export.";
+        result = await _postMeetingAutomationService.RunAsync(
+            meeting,
+            CurrentPostMeetingAutomationOptions(),
+            completionEvent,
+            _applicationShutdownCancellation.Token);
+    }
+    catch (Exception exception)
+    {
+        // The meeting was already durably saved and acknowledged. This fallback is diagnostics
+        // only; optional automation is never allowed to escape and invalidate completion.
+        result = new PostMeetingAutomationResult(
+            Guid.NewGuid(),
+            PostMeetingAutomationStatus.Failed,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            0,
+            null,
+            "",
+            "",
+            false,
+            false,
+            $"Automation failed ({exception.GetType().Name}).",
+            PostMeetingExportDiagnostic.NotRequested);
+    }
+
+    var index = Meetings.ToList().FindIndex(candidate => candidate.Id == meeting.Id);
+    var updated = meeting with { AutomationResult = result };
+    if (index >= 0)
+    {
+        Meetings[index] = updated;
+        try
+        {
+            SaveMeetings();
+        }
+        catch (Exception exception)
+        {
+            _logService.Info($"Automation diagnostics persistence failed. category={exception.GetType().Name}");
+        }
+    }
+
+    PostMeetingAutomationStatusText = DescribeAutomationResult(result);
+    _logService.Info(
+        $"Post-meeting automation finished. status={result.Status}; attempts={result.Attempts}; exitCode={result.ExitCode?.ToString() ?? "none"}; exportRequested={result.Export.Requested}; exportCompleted={result.Export.Completed}; contentLogged=false");
+    RefreshMeetingViews();
+    RefreshSearchResults();
+    return updated;
+}
+
+private void RefreshRecoverableMeetingSessions()
+{
+    _recoverableMeetingSessions.Clear();
+    _recoverableMeetingSessions.AddRange(_meetingRecordingCoordinator.DiscoverRecoverableSessions());
+    OnPropertyChanged(nameof(RecoverableMeetingCount));
+    OnPropertyChanged(nameof(HasRecoverableMeetings));
+    OnPropertyChanged(nameof(RecoverInterruptedButtonText));
+    if (_recoverableMeetingSessions.Count > 0)
+    {
+        MeetingSessionStatus = $"{_recoverableMeetingSessions.Count} interrupted recording(s) ready for recovery";
+    }
+}
+
+private async void RecoverInterruptedMeetings_Click(object sender, RoutedEventArgs e)
+{
+    if (_meetingRecordingCoordinator.IsBusy || _meetingRecordingCoordinator.IsRecording)
+    {
+        return;
+    }
+    var pending = _recoverableMeetingSessions.ToList();
+    foreach (var recovery in pending)
+    {
+        _meetingOperationCancellation?.Dispose();
+        _meetingOperationCancellation = new CancellationTokenSource();
+        try
+        {
+            DictationStatus = "Recovering interrupted meeting";
+            _toastNotificationService.Show("Recovering meeting", "Finalizing retained local audio", ToastState.Transcribing, 0);
+            var result = await _meetingRecordingCoordinator.FinalizeRecoverableAsync(
+                recovery,
+                _meetingOperationCancellation.Token);
+            await PersistRecordedMeetingAsync(result);
+        }
+        catch (OperationCanceledException)
+        {
+            break;
+        }
+        catch (Exception exception)
+        {
+            _logService.Info($"Interrupted meeting recovery failed. category={exception.GetType().Name}");
+            _toastNotificationService.Show(
+                "Recovery needs attention",
+                "The retained audio remains available for another retry",
+                ToastState.Error,
+                4600);
+            break;
+        }
+    }
+    RefreshRecoverableMeetingSessions();
+    if (_recoverableMeetingSessions.Count == 0)
+    {
+        DictationStatus = "Interrupted meeting recovery complete";
+        _toastNotificationService.Show("Meeting recovery complete", "Recovered recordings are in Meetings", ToastState.Success);
+    }
+}
+
+private void OnMeetingSessionStateChanged(object? sender, MeetingSessionStateChangedEventArgs e)
+{
+    Dispatcher.BeginInvoke(() =>
+    {
+        var state = e.Transition.To;
+        _isMeetingRecording = state is MeetingSessionState.Recording or MeetingSessionState.DegradedRecording;
+        MeetingSessionStatus = state switch
+        {
+            MeetingSessionState.Idle => "Idle",
+            MeetingSessionState.Preparing => "Preparing microphone and meeting audio",
+            MeetingSessionState.Recording => "Recording microphone and meeting audio",
+            MeetingSessionState.DegradedRecording => "Recording with an audio warning",
+            MeetingSessionState.Stopping => "Stopping capture safely",
+            MeetingSessionState.Finalizing => "Finalizing local transcript",
+            MeetingSessionState.Completed => "Meeting completed",
+            MeetingSessionState.Failed => "Meeting needs attention",
+            MeetingSessionState.Cancelled => "Meeting cancelled",
+            MeetingSessionState.RecoverableInterruption => "Recording retained for recovery",
+            _ => state.ToString()
+        };
+        OnPropertyChanged(nameof(MeetingRecordingButtonText));
+    });
+}
+
+private void OnMeetingAudioHealthChanged(object? sender, MeetingAudioHealthChangedEventArgs e)
+{
+    if (!e.Snapshot.IsDegraded)
+    {
+        return;
+    }
+    Dispatcher.BeginInvoke(() =>
+    {
+        MeetingSessionStatus = e.Snapshot.Warnings.FirstOrDefault() ?? "Recording with an audio warning";
+    });
+}
+
+private void OnMeetingRecordingLevelChanged(object? sender, AudioLevelEventArgs e) =>
+    Dispatcher.BeginInvoke(() => _toastNotificationService.UpdateRecordingLevel(e.Peak));
+
+private void OnLiveTranscriptChanged(object? sender, LiveTranscriptSnapshot snapshot)
+{
+    Dispatcher.BeginInvoke(() =>
+    {
+        _liveTranscriptWindow ??= new MeetingLiveTranscriptWindow(ShowLiveWaveformOnHover) { Owner = this };
+        _liveTranscriptWindow.Update(snapshot);
+        if (!_liveTranscriptWindow.IsVisible) _liveTranscriptWindow.Show();
+    });
+}
+
+private void OnLiveTranscriptionFailed(object? sender, Exception exception)
+{
+    Dispatcher.BeginInvoke(() =>
+    {
+        MeetingSessionStatus = "Live preview stopped; retained audio is still recording";
+        _toastNotificationService.Show("Live transcript stopped", "Retained audio will still be finalized locally", ToastState.Error, 4200);
+        _liveTranscriptWindow?.Hide();
+    });
+}
+
+private async void SystemEvents_PowerModeChanged(object sender, PowerModeChangedEventArgs e)
+{
+    try
+    {
+        if (e.Mode == PowerModes.Suspend)
+        {
+            await _meetingRecordingCoordinator.SuspendAsync();
+            return;
+        }
+        if (e.Mode == PowerModes.Resume &&
+            _meetingRecordingCoordinator.State == MeetingSessionState.RecoverableInterruption)
+        {
+            await _meetingRecordingCoordinator.ResumeAsync();
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                _isMeetingRecording = _meetingRecordingCoordinator.IsRecording;
+                OnPropertyChanged(nameof(MeetingRecordingButtonText));
+                _toastNotificationService.Show(
+                    _isMeetingRecording ? "Meeting recording resumed" : "Meeting retained for recovery",
+                    _isMeetingRecording ? "Microphone and meeting audio restarted" : "Capture could not restart automatically",
+                    _isMeetingRecording ? ToastState.Recording : ToastState.Error,
+                    _isMeetingRecording ? 0 : 4200);
+            });
+        }
+    }
+    catch (Exception exception)
+    {
+        _logService.Info($"Meeting power-transition handling failed. category={exception.GetType().Name}");
+        RefreshRecoverableMeetingSessions();
+    }
+}
+
+private void RefreshMeetingPlaybackTracks(MeetingItem item)
+{
+    _meetingPlaybackTimer.Stop();
+    _meetingPlaybackService.Close();
+    MeetingPlaybackTracks.Clear();
+    foreach (var track in MeetingRecordingPlaybackService.SelectTracks(
+                 item.MicrophoneAudioPath,
+                 item.SystemAudioPath,
+                 item.SourcePath))
+    {
+        MeetingPlaybackTracks.Add(track);
+    }
+    OnPropertyChanged(nameof(HasMeetingPlayback));
+    SelectedMeetingPlaybackTrack = MeetingPlaybackTracks.FirstOrDefault();
+    if (SelectedMeetingPlaybackTrack is null)
+    {
+        MeetingPlaybackPosition = 0;
+        MeetingPlaybackDuration = 0;
+        OnPropertyChanged(nameof(MeetingPlaybackTimeLabel));
+    }
+}
+
+private void ToggleMeetingPlayback_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        if (_meetingPlaybackService.State == MeetingPlaybackState.Playing)
+        {
+            _meetingPlaybackService.Pause();
+            _meetingPlaybackTimer.Stop();
+        }
+        else
+        {
+            _meetingPlaybackService.Play();
+            _meetingPlaybackTimer.Start();
+        }
+        OnPropertyChanged(nameof(MeetingPlaybackButtonText));
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Playback failed: {exception.Message}";
+        _toastNotificationService.Show("Playback failed", "The selected track could not play", ToastState.Error, 3600);
+    }
+}
+
+private void MeetingPlaybackSeek_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+{
+    if (_updatingMeetingPlaybackPosition || _meetingPlaybackService.State == MeetingPlaybackState.Empty)
+    {
+        return;
+    }
+    _meetingPlaybackService.Seek(TimeSpan.FromSeconds(Math.Max(0, e.NewValue)));
+    OnPropertyChanged(nameof(MeetingPlaybackTimeLabel));
+}
+
+private void MeetingPlaybackTimer_Tick(object? sender, EventArgs e)
+{
+    _updatingMeetingPlaybackPosition = true;
+    MeetingPlaybackPosition = _meetingPlaybackService.Position.TotalSeconds;
+    MeetingPlaybackDuration = _meetingPlaybackService.Duration.TotalSeconds;
+    _updatingMeetingPlaybackPosition = false;
+    OnPropertyChanged(nameof(MeetingPlaybackTimeLabel));
+    if (_meetingPlaybackService.State != MeetingPlaybackState.Playing)
+    {
+        _meetingPlaybackTimer.Stop();
+    }
+}
+
+private void OnMeetingPlaybackStateChanged(object? sender, MeetingPlaybackStateChangedEventArgs e)
+{
+    Dispatcher.BeginInvoke(() =>
+    {
+        OnPropertyChanged(nameof(MeetingPlaybackButtonText));
+        if (e.State == MeetingPlaybackState.Failed)
+        {
+            _meetingPlaybackTimer.Stop();
+            _toastNotificationService.Show("Playback stopped", "Windows audio playback failed", ToastState.Error, 3600);
+        }
+    });
+}
+
+private static string FormatPlaybackTime(TimeSpan value) =>
+    value.TotalHours >= 1 ? value.ToString(@"h\:mm\:ss") : value.ToString(@"m\:ss");
 private void AddDictionaryEntry_Click(object sender, RoutedEventArgs e)
 {
     var phrase = DictionaryPhraseBox.Text.Trim();
@@ -2443,6 +4271,29 @@ private async void RefreshRuntimeDiagnostics_Click(object sender, RoutedEventArg
 {
     await RefreshRuntimeDiagnosticsAsync();
 }
+private async void RunBenchmark_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        BenchmarkSummary = "Running benchmark...";
+        DictationStatus = "Running transcription benchmark";
+        _toastNotificationService.Show("Running benchmark", "Using captured local audio", ToastState.Transcribing, 0);
+        var report = await _transcriptionBenchmarkService.RunAsync();
+        BenchmarkSummary = string.IsNullOrWhiteSpace(report.LaunchRecommendation)
+            ? report.Summary
+            : $"{report.Summary}{Environment.NewLine}{report.LaunchRecommendation}";
+        DictationStatus = "Benchmark complete";
+        _toastNotificationService.Show("Benchmark complete", report.Summary, ToastState.Success, 5200);
+    }
+    catch (Exception exception)
+    {
+        var error = ConciseUiError(exception);
+        BenchmarkSummary = $"Benchmark failed: {error}";
+        DictationStatus = $"Benchmark failed: {error}";
+        _logService.Error("Transcription benchmark failed.", exception);
+        _toastNotificationService.Show("Benchmark failed", error, ToastState.Error, 5200);
+    }
+}
 private void OpenModelCache_Click(object sender, RoutedEventArgs e)
 {
     try
@@ -2451,10 +4302,201 @@ private void OpenModelCache_Click(object sender, RoutedEventArgs e)
     }
     catch (Exception exception)
     {
-        DictationStatus = $"Could not open model cache: {exception.Message}";
+        DictationStatus = $"Could not open model cache: {ConciseUiError(exception)}";
         _logService.Error("Could not open model cache.", exception);
     }
 }
+private void OpenCleanupModelCache_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        NativeTextCleanupService.OpenModelCacheDirectory();
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Could not open cleanup cache: {ConciseUiError(exception)}";
+        _logService.Error("Could not open cleanup model cache.", exception);
+    }
+}
+private void OpenTranscriptionModelCache_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        NativeTranscriptionClient.OpenModelCacheDirectory();
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Could not open transcription cache: {ConciseUiError(exception)}";
+        _logService.Error("Could not open transcription model cache.", exception);
+    }
+}
+private void OpenDiarizationModelCache_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        NativeDiarizationClient.OpenModelCacheDirectory();
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Could not open speaker label cache: {ConciseUiError(exception)}";
+        _logService.Error("Could not open diarization model cache.", exception);
+    }
+}
+private void OpenAIApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e)
+{
+    if (_updatingSecretBoxes || sender is not PasswordBox passwordBox)
+    {
+        return;
+    }
+    SaveProtectedSecret(SettingsStore.OpenAISecretKey, passwordBox.Password, isOpenAi: true);
+}
+
+private void OpenRouterApiKeyBox_PasswordChanged(object sender, RoutedEventArgs e)
+{
+    if (_updatingSecretBoxes || sender is not PasswordBox passwordBox)
+    {
+        return;
+    }
+    SaveProtectedSecret(SettingsStore.OpenRouterSecretKey, passwordBox.Password, isOpenAi: false);
+}
+
+private void ClearOpenAIApiKey_Click(object sender, RoutedEventArgs e) =>
+    ClearProtectedSecret(SettingsStore.OpenAISecretKey, OpenAIApiKeyBox, isOpenAi: true);
+
+private void ClearOpenRouterApiKey_Click(object sender, RoutedEventArgs e) =>
+    ClearProtectedSecret(SettingsStore.OpenRouterSecretKey, OpenRouterApiKeyBox, isOpenAi: false);
+
+private void BrowseHookExecutable_Click(object sender, RoutedEventArgs e)
+{
+    var dialog = new Microsoft.Win32.OpenFileDialog
+    {
+        Title = "Choose a post-meeting executable",
+        Filter = "Windows executable (*.exe)|*.exe",
+        CheckFileExists = true,
+        Multiselect = false
+    };
+    if (dialog.ShowDialog(this) == true)
+    {
+        PostMeetingHookExecutablePath = Path.GetFullPath(dialog.FileName);
+        PostMeetingAutomationStatusText = "Hook executable selected. It remains disabled until you enable it.";
+    }
+}
+
+private void BrowseAutoExportDirectory_Click(object sender, RoutedEventArgs e)
+{
+    using var dialog = new System.Windows.Forms.FolderBrowserDialog
+    {
+        Description = "Choose the user-owned folder for automatic Markdown exports",
+        UseDescriptionForTitle = true,
+        ShowNewFolderButton = true,
+        SelectedPath = IsValidAutoExportDirectory(AutoExportMarkdownDirectory)
+            ? AutoExportMarkdownDirectory
+            : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+    };
+    if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+    {
+        AutoExportMarkdownDirectory = Path.GetFullPath(dialog.SelectedPath);
+        PostMeetingAutomationStatusText = "Export destination selected. It remains disabled until you enable it.";
+    }
+}
+
+private async void TestPostMeetingHook_Click(object sender, RoutedEventArgs e)
+{
+    var validation = PostMeetingAutomationService.ValidateExecutable(PostMeetingHookExecutablePath);
+    if (validation is not null)
+    {
+        PostMeetingAutomationStatusText = validation;
+        System.Windows.MessageBox.Show(this, validation, "Post-meeting hook", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return;
+    }
+
+    PostMeetingAutomationStatusText = "Running a metadata-only synthetic hook test…";
+    try
+    {
+        var result = await _postMeetingAutomationService.TestHookAsync(
+            CurrentPostMeetingAutomationOptions(),
+            _applicationShutdownCancellation.Token);
+        PostMeetingAutomationStatusText = DescribeAutomationResult(result);
+        var detail = $"Status: {result.Status}\nAttempts: {result.Attempts}\nExit code: {result.ExitCode?.ToString() ?? "none"}";
+        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+            detail += $"\n\nstdout (redacted, bounded):\n{result.StandardOutput}";
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
+            detail += $"\n\nstderr (redacted, bounded):\n{result.StandardError}";
+        if (!string.IsNullOrWhiteSpace(result.Error)) detail += $"\n\n{result.Error}";
+        System.Windows.MessageBox.Show(
+            this,
+            detail,
+            "Post-meeting hook test",
+            MessageBoxButton.OK,
+            result.Completed ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+    catch (Exception exception)
+    {
+        PostMeetingAutomationStatusText = $"Hook test failed ({exception.GetType().Name}).";
+        System.Windows.MessageBox.Show(
+            this,
+            PostMeetingAutomationStatusText,
+            "Post-meeting hook test",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+}
+
+private void SaveProtectedSecret(string key, string value, bool isOpenAi)
+{
+    try
+    {
+        _settingsStore.SaveSecret(key, value);
+        if (isOpenAi)
+        {
+            _openAIApiKey = value;
+            OnPropertyChanged(nameof(OpenAIApiKeyStatus));
+        }
+        else
+        {
+            _openRouterApiKey = value;
+            OnPropertyChanged(nameof(OpenRouterApiKeyStatus));
+        }
+        SaveSettings();
+    }
+    catch (Exception exception)
+    {
+        _logService.Error("Could not update a protected summary-provider credential.", exception);
+        _toastNotificationService.Show("Key not saved", "Windows Credential Manager was unavailable.", ToastState.Error, 4200);
+    }
+}
+
+private void ClearProtectedSecret(string key, PasswordBox passwordBox, bool isOpenAi)
+{
+    _updatingSecretBoxes = true;
+    try
+    {
+        passwordBox.Clear();
+        _settingsStore.SaveSecret(key, null);
+        if (isOpenAi)
+        {
+            _openAIApiKey = "";
+            OnPropertyChanged(nameof(OpenAIApiKeyStatus));
+        }
+        else
+        {
+            _openRouterApiKey = "";
+            OnPropertyChanged(nameof(OpenRouterApiKeyStatus));
+        }
+        SaveSettings();
+        DictationStatus = "Stored API key cleared";
+    }
+    catch (Exception exception)
+    {
+        _logService.Error("Could not clear a protected summary-provider credential.", exception);
+        _toastNotificationService.Show("Key not cleared", "Windows Credential Manager was unavailable.", ToastState.Error, 4200);
+    }
+    finally
+    {
+        _updatingSecretBoxes = false;
+    }
+}
+
 private void OpenLogs_Click(object sender, RoutedEventArgs e)
 {
     try
@@ -2463,9 +4505,63 @@ private void OpenLogs_Click(object sender, RoutedEventArgs e)
     }
     catch (Exception exception)
     {
-        DictationStatus = $"Could not open logs: {exception.Message}";
+        DictationStatus = $"Could not open logs: {ConciseUiError(exception)}";
     }
 }
+private void CleanupCaptures_Click(object sender, RoutedEventArgs e)
+{
+    var inventory = _captureStorageService.InspectLegacyAndTransientCaptures();
+    if (inventory.FileCount == 0)
+    {
+        System.Windows.MessageBox.Show(
+            "No legacy or interrupted capture files were found. Saved meetings, imports, transcripts, settings, models, and last-dictation.wav were not inspected for deletion.",
+            "Audio storage",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+        return;
+    }
+
+    var confirmed = System.Windows.MessageBox.Show(
+        $"Muesli found {inventory.FileCount} legacy or interrupted capture file(s), totaling {FormatByteCount(inventory.TotalBytes)}.\n\nDelete these files? Saved meeting recordings, imported media, transcripts, settings, models, and last-dictation.wav are excluded.",
+        "Clean legacy captures",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Warning);
+    if (confirmed != MessageBoxResult.Yes)
+    {
+        return;
+    }
+
+    var result = _captureStorageService.DeleteLegacyAndTransientCaptures(inventory);
+    DictationStatus = result.FailedPaths.Count == 0
+        ? $"Deleted {result.DeletedCount} legacy capture file(s)"
+        : $"Deleted {result.DeletedCount}; {result.FailedPaths.Count} could not be removed";
+    System.Windows.MessageBox.Show(
+        result.FailedPaths.Count == 0
+            ? $"Deleted {result.DeletedCount} legacy or interrupted capture file(s)."
+            : $"Deleted {result.DeletedCount} file(s). {result.FailedPaths.Count} file(s) were busy or inaccessible and were left in place.",
+        "Audio storage",
+        MessageBoxButton.OK,
+        result.FailedPaths.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+}
+
+private void OpenPrivacy_Click(object sender, RoutedEventArgs e)
+{
+    var privacyPath = System.IO.Path.Combine(AppContext.BaseDirectory, "WINDOWS-PRIVACY.md");
+    if (!System.IO.File.Exists(privacyPath))
+    {
+        DictationStatus = "Privacy document is missing from this build";
+        return;
+    }
+    Process.Start(new ProcessStartInfo { FileName = privacyPath, UseShellExecute = true });
+}
+
+private static string FormatByteCount(long bytes) => bytes switch
+{
+    >= 1_073_741_824 => $"{bytes / 1_073_741_824.0:0.0} GB",
+    >= 1_048_576 => $"{bytes / 1_048_576.0:0.0} MB",
+    >= 1024 => $"{bytes / 1024.0:0.0} KB",
+    _ => $"{bytes} B"
+};
 private async void CheckForUpdates_Click(object sender, RoutedEventArgs e)
 {
     if (_isUpdateReady && _pendingUpdate is not null)
@@ -2655,32 +4751,168 @@ private async void ClearModelCache_Click(object sender, RoutedEventArgs e)
     }
     try
     {
-        _runtimeDiagnosticsService.ClearModelCache();
+        foreach (var model in TranscriptionModels)
+        {
+            if (_modelLifecycle.Snapshot(model.Id).DiskSizeBytes > 0)
+            {
+                await _modelLifecycle.DeleteAsync(model.Id);
+            }
+        }
+        foreach (var model in StreamingModelCatalog.Models)
+        {
+            if (_streamingModelLifecycle.Snapshot(model.Id).DiskSizeBytes > 0)
+            {
+                await _streamingModelLifecycle.DeleteAsync(model.Id);
+            }
+        }
+        NativeDiarizationClient.ClearModelCache();
+        NativeTextCleanupService.ClearModelCache();
         DictationStatus = "Model cache cleared";
         await RefreshRuntimeDiagnosticsAsync();
     }
     catch (Exception exception)
     {
-        DictationStatus = $"Could not clear model cache: {exception.Message}";
+        DictationStatus = $"Could not clear model cache: {ConciseUiError(exception)}";
         _logService.Error("Could not clear model cache.", exception);
     }
 }
-private async void DownloadWhisperModel_Click(object sender, RoutedEventArgs e)
+private async void DownloadSelectedModel_Click(object sender, RoutedEventArgs e)
+{
+    await DownloadSelectedModelAsync();
+}
+
+private async void PrepareModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: TranscriptionModelItem item })
+    {
+        await RunModelItemOperationAsync(item, progress => _modelLifecycle.PrepareAsync(item.Id, progress));
+    }
+}
+
+private void CancelModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: TranscriptionModelItem item })
+    {
+        _modelLifecycle.Cancel(item.Id);
+        DictationStatus = $"Cancelling {item.DisplayName}…";
+    }
+}
+
+private async void RetryModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: TranscriptionModelItem item })
+    {
+        await RunModelItemOperationAsync(item, _ => _modelLifecycle.RetryAsync(item.Id));
+    }
+}
+
+private async void VerifyModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: TranscriptionModelItem item })
+    {
+        await RunModelItemOperationAsync(item, progress => _modelLifecycle.VerifyAsync(item.Id, progress));
+    }
+}
+
+private async void DeleteModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is not FrameworkElement { DataContext: TranscriptionModelItem item })
+    {
+        return;
+    }
+
+    var confirmation = System.Windows.MessageBox.Show(
+        this,
+        $"Delete the downloaded {item.DisplayName} files? Role selections will be preserved, but transcription using this model will fail closed until you prepare it again.",
+        "Delete transcription model",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Warning);
+    if (confirmation != MessageBoxResult.Yes)
+    {
+        return;
+    }
+
+    await RunModelItemOperationAsync(item, _ => _modelLifecycle.DeleteAsync(item.Id));
+}
+
+private void ModelDiagnosticsItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: TranscriptionModelItem item })
+    {
+        System.Windows.MessageBox.Show(this, item.Diagnostics, $"{item.DisplayName} diagnostics", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+}
+
+private async Task RunModelItemOperationAsync(
+    TranscriptionModelItem item,
+    Func<IProgress<ModelDownloadProgress>, Task> operation)
 {
     try
     {
-        DictationStatus = $"Downloading {SelectedModelProfile}";
-        _toastNotificationService.Show("Downloading model", SelectedModelProfile, ToastState.Transcribing, 0);
-        var result = await _dictationCoordinator.DownloadModelAsync("whisper", SelectedModelProfile);
-        DictationStatus = result.Text;
-        _toastNotificationService.Show("Model ready", SelectedModelProfile, ToastState.Success, 3600);
+        var progress = new Progress<ModelDownloadProgress>(value =>
+        {
+            item.ProgressText = value.DisplayText;
+            DictationStatus = value.DisplayText;
+        });
+        await operation(progress);
+        DictationStatus = $"{item.DisplayName}: {_modelLifecycle.Snapshot(item.Id).StatusText}";
+    }
+    catch (OperationCanceledException)
+    {
+        DictationStatus = $"{item.DisplayName} operation cancelled";
+    }
+    catch (Exception exception)
+    {
+        var error = ConciseUiError(exception);
+        DictationStatus = $"{item.DisplayName}: {error}";
+        _logService.Error($"Transcription model operation failed. model={item.Id}", exception);
+    }
+    finally
+    {
+        RefreshModelItems();
+        await RefreshRuntimeDiagnosticsAsync();
+    }
+}
+private async void DownloadAllModels_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        var progress = new Progress<ModelDownloadProgress>(value => DictationStatus = value.DisplayText);
+        await _modelLifecycle.PrepareAllSequentialAsync(progress);
+
+        DictationStatus = $"All {TranscriptionModels.Count} transcription models are ready";
+        _toastNotificationService.Show("Models ready", $"{TranscriptionModels.Count} native transcription models verified", ToastState.Success, 4200);
+        OnPropertyChanged(nameof(SelectedModelCacheStatus));
         await RefreshRuntimeDiagnosticsAsync();
     }
     catch (Exception exception)
     {
-        DictationStatus = $"Model download failed: {exception.Message}";
-        _logService.Error($"Model download failed for {SelectedModelProfile}.", exception);
-        _toastNotificationService.Show("Model download failed", exception.Message, ToastState.Error, 5200);
+        var error = ConciseUiError(exception);
+        DictationStatus = $"Model setup stopped: {error}";
+        _logService.Error("Prepare all transcription models failed.", exception);
+        _toastNotificationService.Show("Model setup stopped", error, ToastState.Error, 5200);
+    }
+}
+private async Task DownloadSelectedModelAsync()
+{
+    var selected = SelectedTranscriptionModel;
+    try
+    {
+        DictationStatus = $"Preparing {selected.DisplayName}";
+        _toastNotificationService.Show("Preparing transcription", selected.DisplayName, ToastState.Transcribing, 0);
+        var progress = new Progress<ModelDownloadProgress>(value => DictationStatus = value.DisplayText);
+        await _modelLifecycle.PrepareAsync(selected.Id, progress);
+        DictationStatus = $"{selected.DisplayName} downloaded and verified; role selections were unchanged";
+        _toastNotificationService.Show("Transcription ready", $"{selected.DisplayName} verified", ToastState.Success, 3600);
+        OnPropertyChanged(nameof(SelectedModelCacheStatus));
+        await RefreshRuntimeDiagnosticsAsync();
+    }
+    catch (Exception exception)
+    {
+        var error = ConciseUiError(exception);
+        DictationStatus = $"{selected.DisplayName} download failed: {error}";
+        _logService.Error($"{selected.DisplayName} model download failed.", exception);
+        _toastNotificationService.Show("Model download failed", error, ToastState.Error, 5200);
     }
 }
 private async Task EnsureBaseModelDownloadedAsync()
@@ -2689,111 +4921,33 @@ private async Task EnsureBaseModelDownloadedAsync()
     {
         return;
     }
-    if (_runtimeDiagnosticsService.IsWhisperModelCached("base"))
+    var selected = SelectedTranscriptionModel;
+    if (_modelLifecycle.Snapshot(selected.Id).Status is TranscriptionModelStatus.Ready or TranscriptionModelStatus.Selected)
     {
         return;
     }
     try
     {
-        DictationStatus = "Downloading base model";
-        _toastNotificationService.Show("Downloading base model", "First-run setup", ToastState.Transcribing, 0);
-        var result = await _dictationCoordinator.DownloadModelAsync("whisper", "base");
-        DictationStatus = result.Text;
-        _toastNotificationService.Show("Model ready", "base", ToastState.Success, 3600);
+        DictationStatus = $"Downloading {selected.DisplayName}";
+        _toastNotificationService.Show("Downloading model", "First-run setup", ToastState.Transcribing, 0);
+        var progress = new Progress<ModelDownloadProgress>(value => DictationStatus = value.DisplayText);
+        await _modelLifecycle.PrepareAsync(selected.Id, progress);
+        DictationStatus = $"{selected.DisplayName} ready";
+        _toastNotificationService.Show("Model ready", selected.DisplayName, ToastState.Success, 3600);
+        OnPropertyChanged(nameof(SelectedModelCacheStatus));
         await RefreshRuntimeDiagnosticsAsync();
     }
     catch (Exception exception)
     {
-        DictationStatus = $"Base model download failed: {exception.Message}";
+        DictationStatus = $"Model download failed: {exception.Message}";
         _logService.Error("Base model auto-download failed.", exception);
-        _toastNotificationService.Show("Model download failed", "Retry from Models → Download base.", ToastState.Error, 5200);
+        _toastNotificationService.Show("Model download failed", "Retry from Models → Download.", ToastState.Error, 5200);
     }
 }
 public string SetupReadiness
 {
     get => _setupReadiness;
     private set => SetField(ref _setupReadiness, value);
-}
-private void SetParakeetActive_Click(object sender, RoutedEventArgs e)
-{
-    SelectedAsrEngine = "parakeet-v3";
-    DictationStatus = "Parakeet selected";
-    _toastNotificationService.Show("Parakeet selected", "Install optional Parakeet runtime dependencies before first use", ToastState.Success, 3600);
-}
-private async void TestParakeet_Click(object sender, RoutedEventArgs e)
-{
-    try
-    {
-        DictationStatus = "Testing Parakeet runtime";
-        _toastNotificationService.Show("Testing Parakeet", "Checking NVIDIA/CUDA backend", ToastState.Transcribing, 0);
-        var result = await _meetingTranscriptionClient.DownloadModelAsync("parakeet", "parakeet-v3");
-        DictationStatus = result.Text;
-        _toastNotificationService.Show("Parakeet ready", "NVIDIA backend initialized", ToastState.Success, 4200);
-        await RefreshRuntimeDiagnosticsAsync();
-    }
-    catch (Exception exception)
-    {
-        DictationStatus = $"Parakeet test failed: {exception.Message}";
-        _logService.Error("Parakeet readiness test failed.", exception);
-        var noNvidia = exception.Message.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase);
-        var toastTitle = noNvidia ? "Parakeet needs an NVIDIA GPU" : "Parakeet unavailable";
-        _toastNotificationService.Show(toastTitle, exception.Message, ToastState.Error, 6200);
-    }
-}
-private async void DownloadQwenModel_Click(object sender, RoutedEventArgs e)
-{
-    var model = Environment.GetEnvironmentVariable("MUESLI_POST_PROCESSOR_MODEL") ?? "Qwen/Qwen2.5-3B-Instruct";
-    try
-    {
-        DictationStatus = "Downloading Qwen cleanup model";
-        _toastNotificationService.Show("Downloading Qwen", model, ToastState.Transcribing, 0);
-        var result = await _meetingTranscriptionClient.DownloadModelAsync("postprocess", model);
-        DictationStatus = result.Text;
-        _toastNotificationService.Show("Qwen ready", model, ToastState.Success, 3600);
-        await RefreshRuntimeDiagnosticsAsync();
-    }
-    catch (Exception exception)
-    {
-        DictationStatus = $"Qwen download failed: {exception.Message}";
-        _toastNotificationService.Show("Qwen download failed", exception.Message, ToastState.Error, 5200);
-    }
-}
-private async void TestDiarization_Click(object sender, RoutedEventArgs e)
-{
-    try
-    {
-        DictationStatus = "Testing diarization model";
-        _toastNotificationService.Show("Testing diarization", "Loading pyannote speaker model", ToastState.Transcribing, 0);
-        var result = await _meetingTranscriptionClient.DownloadModelAsync("diarization", "pyannote/speaker-diarization-3.1");
-        DictationStatus = result.Text;
-        _toastNotificationService.Show("Diarization ready", "Speaker model loaded", ToastState.Success, 3600);
-        await RefreshRuntimeDiagnosticsAsync();
-    }
-    catch (Exception exception)
-    {
-        DictationStatus = $"Diarization test failed: {exception.Message}";
-        _logService.Error("Diarization readiness test failed.", exception);
-        _toastNotificationService.Show("Diarization unavailable", exception.Message, ToastState.Error, 6200);
-    }
-}
-private async void TestQwenCleanup_Click(object sender, RoutedEventArgs e)
-{
-    try
-    {
-        DictationStatus = "Testing Qwen cleanup";
-        _toastNotificationService.Show("Testing cleanup", "Running local post-processing", ToastState.Transcribing, 0);
-        var sample = "um make a todo list buy milk and then email the team and schedule follow up";
-        var result = await _meetingTranscriptionClient.PostProcessAsync(sample, "diagnostic", PostProcessingPrompt);
-        DictationStatus = string.IsNullOrWhiteSpace(result.Text) ? "Qwen cleanup returned no text" : "Qwen cleanup ready";
-        _toastNotificationService.Show("Cleanup ready", result.Text, ToastState.Success, 5200);
-        await RefreshRuntimeDiagnosticsAsync();
-    }
-    catch (Exception exception)
-    {
-        DictationStatus = $"Qwen cleanup test failed: {exception.Message}";
-        _logService.Error("Qwen post-processing readiness test failed.", exception);
-        _toastNotificationService.Show("Cleanup unavailable", "Install/download Qwen before enabling cleanup", ToastState.Error, 6200);
-    }
 }
 private void DeleteDictionaryEntry_Click(object sender, RoutedEventArgs e)
 {
@@ -2836,8 +4990,22 @@ private void ShowMeetings_Click(object sender, RoutedEventArgs e)
 private void ShowDictionary_Click(object sender, RoutedEventArgs e) => ShowPage(DictionaryPage, DictionaryNav);
 private void ShowModels_Click(object sender, RoutedEventArgs e) => ShowPage(ModelsPage, ModelsNav);
 private void ShowShortcuts_Click(object sender, RoutedEventArgs e) => ShowPage(ShortcutsPage, ShortcutsNav);
-private void ShowSettings_Click(object sender, RoutedEventArgs e) => ShowPage(SettingsPage, SettingsNav);
-private void ShowAbout_Click(object sender, RoutedEventArgs e) => ShowPage(AboutPage, AboutNav);
+private void ShowSettings_Click(object sender, RoutedEventArgs e) { OnPropertyChanged(nameof(StartupRegistrationLabel)); OnPropertyChanged(nameof(SetupNeedsResume)); OnPropertyChanged(nameof(SetupResumeLabel)); ShowPage(SettingsPage, SettingsNav); _trayIconService.Refresh(); }
+private void ShowAbout_Click(object sender, RoutedEventArgs e) { ShowPage(AboutPage, AboutNav); _trayIconService.Refresh(); }
+private void ResumeSetup_Click(object sender, RoutedEventArgs e) => ShowOnboardingIfNeeded(explicitResume: true);
+private void RepairStartup_Click(object sender, RoutedEventArgs e)
+{
+    if (_isVisualPreview)
+    {
+        DictationStatus = "Preview-only: startup repair is disabled and no registry state was changed.";
+        return;
+    }
+    try { StartupRegistrationService.SetEnabled(true); StartAtLogin = true; DictationStatus = "Startup registration repaired"; }
+    catch (Exception exception) { DictationStatus = $"Startup repair failed: {ConciseUiError(exception)}"; }
+    finally { OnPropertyChanged(nameof(StartupRegistrationLabel)); }
+}
+private void FeatureTour_Click(object sender, RoutedEventArgs e) => ShowFeatureTour();
+private void ShowFeatureTour() => new FeatureTourWindow(() => { _lastCompletedFeatureTourVersion = FeatureTourWindow.CurrentVersion; SaveSettings(); }) { Owner = this }.Show();
 private void SetLightTheme_Click(object sender, RoutedEventArgs e)
 {
     SetTheme("light");
@@ -3446,6 +5614,15 @@ private void UpdateSearchPageVisibility()
         ShowPage(_lastNonSearchPage ?? DictationsPage, _lastNonSearchNav ?? DictationsNav);
     }
 }
+private void OpenSearchFromCompactRail_Click(object sender, RoutedEventArgs e)
+{
+    ShowPage(SearchPage, _lastNonSearchNav ?? DictationsNav);
+    Dispatcher.BeginInvoke(() =>
+    {
+        MainSearchInput.Focus();
+        Keyboard.Focus(MainSearchInput);
+    });
+}
 private void RefreshSearchResults()
 {
     SearchDictationResults.Refresh();
@@ -3475,7 +5652,7 @@ private void MaximizeToWorkArea()
         WindowState = WindowState.Normal;
     }
     _restoreBounds = new Rect(Left, Top, Width, Height);
-    var area = SystemParameters.WorkArea;
+    var area = WindowPlacementService.GetWorkAreaForWindow(this);
     WindowState = WindowState.Normal;
     Left = area.Left;
     Top = area.Top;
@@ -3486,14 +5663,35 @@ private void MaximizeToWorkArea()
 private void RestoreFromWorkAreaMaximize()
 {
     WindowState = WindowState.Normal;
-    Left = _restoreBounds.Left;
-    Top = _restoreBounds.Top;
-    Width = _restoreBounds.Width;
-    Height = _restoreBounds.Height;
+    var restored = WindowPlacementService.ClampToVisibleWorkArea(this, _restoreBounds);
+    Left = restored.Left;
+    Top = restored.Top;
+    Width = restored.Width;
+    Height = restored.Height;
     _isWorkAreaMaximized = false;
+}
+private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
+{
+    IsCompactLayout = e.NewSize.Width < 900;
+}
+private void Window_Activated(object? sender, EventArgs e)
+{
+    if (_isVisualPreview) return;
+    // Activation is a read-only reconciliation: external Windows changes must never trigger a registry write.
+    var registered = StartupRegistrationService.IsEnabled();
+    if (_startAtLogin != registered)
+    {
+        _startAtLogin = registered;
+        OnPropertyChanged(nameof(StartAtLogin));
+    }
+    OnPropertyChanged(nameof(StartupRegistrationLabel));
+    OnPropertyChanged(nameof(SetupNeedsResume));
+    OnPropertyChanged(nameof(SetupResumeLabel));
+    _trayIconService.Refresh();
 }
 private void Close_Click(object sender, RoutedEventArgs e)
 {
+    if (_isVisualPreview) { Close(); return; }
     Hide();
 }
 private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -3588,39 +5786,68 @@ private static string FirstDiagnosticLine(string? diagnostic)
     }
     return string.Join(" | ", lines);
 }
-private async Task<string> PostProcessIfEnabledAsync(
-    string text,
-    string context,
-    Func<string, string, string, Task<PostProcessingResult>> postProcessor)
+
+private static string TraceValue(string? value)
 {
-    if (!PostProcessingEnabled || string.IsNullOrWhiteSpace(text))
-    {
-        return text;
-    }
-    try
-    {
-        DictationStatus = "Cleaning transcript";
-        _toastNotificationService.Show("Cleaning transcript", "Applying Qwen post-processing", ToastState.Transcribing, 0);
-        var result = await postProcessor(text, context, PostProcessingPrompt);
-        if (!string.IsNullOrWhiteSpace(result.Diagnostic) &&
-            result.Diagnostic.Contains("fallback", StringComparison.OrdinalIgnoreCase))
-        {
-            DictationStatus = "Cleaned with fallback";
-        }
-        return string.IsNullOrWhiteSpace(result.Text) ? text : result.Text.Trim();
-    }
-    catch (Exception exception)
-    {
-        DictationStatus = $"Post-processing skipped: {exception.Message}";
-        _toastNotificationService.Show("Post-processing skipped", "Raw transcript kept", ToastState.Error, 3200);
-        return text;
-    }
+    return (value ?? "")
+        .Replace(';', ',')
+        .Replace('\r', ' ')
+        .Replace('\n', ' ')
+        .Trim();
 }
-private async Task<string> CreateMeetingSummaryAsync(string transcript, string title)
+private static string ConciseUiError(Exception exception)
+{
+    var message = exception.Message
+        .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .FirstOrDefault() ?? "Something went wrong.";
+    return message.Length <= 180 ? message : $"{message[..177]}...";
+}
+private async Task<string> CreateMeetingSummaryAsync(
+    string transcript,
+    string title,
+    CancellationToken cancellationToken = default)
 {
     DictationStatus = SelectedSummaryProvider == "local" ? "Creating local summary" : "Creating AI summary";
     _toastNotificationService.Show("Summarizing meeting", SelectedSummaryProvider, ToastState.Transcribing, 0);
-    return await MeetingSummaryService.CreateSummaryAsync(transcript, title, CurrentSettingsSnapshot());
+    return await CreateMeetingSummaryWithSettingsAsync(transcript, title, CurrentSettingsSnapshot(), cancellationToken);
+}
+
+private async Task<string> CreateMeetingSummaryWithSettingsAsync(
+    string transcript,
+    string title,
+    MuesliSettings settings,
+    CancellationToken cancellationToken = default)
+{
+    if (!await _summaryGate.WaitAsync(0, cancellationToken))
+    {
+        throw new InvalidOperationException("A meeting summary request is already in progress.");
+    }
+    try
+    {
+        _lastSummaryUsedLocalFallback = false;
+        var result = await MeetingSummaryService.CreateSummaryResultAsync(
+            transcript,
+            title,
+            settings,
+            cancellationToken);
+        if (result.UsedLocalFallback)
+        {
+            _lastSummaryUsedLocalFallback = true;
+            DictationStatus = $"{result.Provider} failed; local summary used";
+            _toastNotificationService.Show(
+                "Local summary used",
+                $"{result.Provider} could not create notes. Your transcript was preserved.",
+                ToastState.Error,
+                5200);
+            _logService.Info(
+                $"Cloud summary fallback. provider={result.Provider}; reason={result.SafeFailureReason ?? "provider-error"}; localFallback=true");
+        }
+        return result.Summary;
+    }
+    finally
+    {
+        _summaryGate.Release();
+    }
 }
 private async Task RefreshRuntimeDiagnosticsAsync()
 {
@@ -3629,7 +5856,11 @@ private async Task RefreshRuntimeDiagnosticsAsync()
         RuntimeDiagnostics = "Checking runtime...";
         SetupReadiness = "Checking setup...";
         RuntimeSetupStatus = "";
-        var diagnostics = await _runtimeDiagnosticsService.InspectAsync();
+        var diagnostics = await _runtimeDiagnosticsService.InspectAsync(
+            EnableLocalCleanup,
+            SelectedTranscriptionModel.Id,
+            SelectedFinalMeetingModel.Id,
+            SelectedLiveMeetingModel.Id);
         RuntimeDiagnostics = diagnostics.Summary;
         ModelCacheDirectory = diagnostics.ModelCacheDirectory;
         ModelCacheSize = diagnostics.ModelCacheSize;
@@ -3639,271 +5870,490 @@ private async Task RefreshRuntimeDiagnosticsAsync()
     }
     catch (Exception exception)
     {
-        RuntimeDiagnostics = $"Diagnostics failed: {exception.Message}";
+        var failureStatus = RuntimeStatusMapper.Map(null, exception);
+        RuntimeDiagnostics = "Setup check failed. Open logs for details.";
         SetupReadiness = "Setup check failed. Open logs for details.";
-        RuntimeSetupStatus = "Setup check failed. Open logs for details.";
-        CanInstallLocalRuntime = !string.IsNullOrWhiteSpace(WorkerRuntimeLocator.FindSetupScriptOrNull());
-        TranscriptionWorkerStatus = "Needs setup";
-        WhisperRuntimeStatus = "Needs setup";
-        SelectedModelCacheStatus = "Not downloaded";
-        SpeakerDiarizationStatusLabel = "Optional setup needed";
-        GpuRuntimeStatus = "CPU mode";
-        QwenRuntimeStatus = "Optional, not installed";
-        ParakeetRuntimeStatus = "Optional, not installed";
-        DiarizationDependencyStatus = "Optional setup needed";
-        DiarizationTokenStatus = "Optional if model access fails";
+        RuntimeSetupStatus = failureStatus.Readiness;
+        NativeRuntimeStatus = failureStatus.RuntimeStatus;
+        SpeakerDiarizationStatusLabel = "Unknown (diagnostics failed)";
+        DictationModelRuntimeStatus = SelectedModelCacheStatus;
+        QwenCleanupRuntimeStatus = NativeTextCleanupService.Status(EnableLocalCleanup);
+        GpuRuntimeStatus = failureStatus.ProviderStatus;
+        DiarizationDependencyStatus = "Unknown (diagnostics failed)";
+        DiarizationTokenStatus = "Not required";
         _logService.Error("Runtime diagnostics failed.", exception);
     }
 }
-private void ApplyRuntimeDiagnostics(RuntimeDiagnostics diagnostics)
+
+private async Task SwitchDictationModelAsync(string modelId)
 {
-    var workerOk = File.Exists(diagnostics.WorkerScript);
-    var whisperOk = HasReadySignal(diagnostics.DependencyStatus);
-    var qwenOk = HasReadySignal(diagnostics.PostProcessingDependencyStatus);
-    var parakeetOk = HasReadySignal(diagnostics.ParakeetDependencyStatus);
-    var diarizationOk = HasReadySignal(diagnostics.DiarizationDependencyStatus);
-    var selectedModelCached = SelectedAsrEngine != "whisper" || _runtimeDiagnosticsService.IsWhisperModelCached(SelectedModelProfile);
-    var hasHfToken = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HF_TOKEN"));
-    var hasPythonOverride = HasValidPythonOverride();
-    var setupScriptAvailable = !string.Equals(diagnostics.SetupScript, "setup-worker-runtime.ps1 not found", StringComparison.OrdinalIgnoreCase);
-    var workerAssetsPresent = WorkerRuntimeLocator.HasWorkerRequirementsLayout();
-
-    TranscriptionWorkerStatus = workerOk ? "Ready" : "Needs setup";
-    WhisperRuntimeStatus = whisperOk ? "Ready" : "Needs setup";
-    SelectedModelCacheStatus = selectedModelCached ? "Cached" : "Not downloaded";
-    SpeakerDiarizationStatusLabel = diarizationOk ? "Ready" : "Optional setup needed";
-    GpuRuntimeStatus = diagnostics.CudaStatus.Contains("CUDA available", StringComparison.OrdinalIgnoreCase) ? "CUDA available" : "CPU mode";
-    var noNvidiaGpu = diagnostics.CudaStatus.Contains("CUDA not available", StringComparison.OrdinalIgnoreCase);
-    QwenRuntimeStatus = qwenOk ? "Ready" : "Optional, not installed";
-    ParakeetRuntimeStatus = parakeetOk
-        ? "Ready"
-        : noNvidiaGpu ? "Requires NVIDIA GPU" : "Optional, not installed";
-    DiarizationDependencyStatus = SpeakerDiarizationStatusLabel;
-    DiarizationTokenStatus = hasHfToken ? "Configured" : "Optional if model access fails";
-    CanInstallLocalRuntime = !hasPythonOverride && setupScriptAvailable && workerAssetsPresent && (!workerOk || !whisperOk);
-    if (workerOk && whisperOk)
-    {
-        RuntimeSetupStatus = selectedModelCached
-            ? "Local transcription runtime is installed."
-            : "Local runtime is ready. Download a Whisper model before offline use.";
-    }
-    else if (hasPythonOverride)
-    {
-        RuntimeSetupStatus = "MUESLI_PYTHON override is active. Fix that Python environment or clear the override to use Muesli's setup flow.";
-    }
-    else if (!workerAssetsPresent)
-    {
-        RuntimeSetupStatus = "This install is missing worker runtime files. Reinstall Muesli.";
-    }
-    else if (!setupScriptAvailable)
-    {
-        RuntimeSetupStatus = "Runtime setup script is missing from this build. Reinstall Muesli.";
-    }
-    else
-    {
-        RuntimeSetupStatus = "Install local transcription runtime to finish setup.";
-    }
-    SetupReadiness = BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk, setupScriptAvailable, workerAssetsPresent, hasPythonOverride);
-}
-private string BuildSetupReadiness(RuntimeDiagnostics diagnostics)
-{
-    var workerOk = File.Exists(diagnostics.WorkerScript);
-    var whisperOk = HasReadySignal(diagnostics.DependencyStatus);
-    var selectedModelCached = SelectedAsrEngine != "whisper" || _runtimeDiagnosticsService.IsWhisperModelCached(SelectedModelProfile);
-    var diarizationOk = HasReadySignal(diagnostics.DiarizationDependencyStatus);
-    var setupScriptAvailable = !string.Equals(diagnostics.SetupScript, "setup-worker-runtime.ps1 not found", StringComparison.OrdinalIgnoreCase);
-    var workerAssetsPresent = WorkerRuntimeLocator.HasWorkerRequirementsLayout();
-    var hasPythonOverride = HasValidPythonOverride();
-    return BuildSetupReadiness(workerOk, whisperOk, selectedModelCached, diarizationOk, setupScriptAvailable, workerAssetsPresent, hasPythonOverride);
-}
-private string BuildSetupReadiness(bool workerOk, bool whisperOk, bool selectedModelCached, bool diarizationOk, bool setupScriptAvailable, bool workerAssetsPresent, bool hasPythonOverride)
-{
-    var lines = new List<string>();
-    if (!workerAssetsPresent)
-    {
-        lines.Add("This install is missing worker runtime files. Reinstall Muesli.");
-    }
-    else if (workerOk && whisperOk)
-    {
-        lines.Add("Core transcription is ready.");
-    }
-    else if (hasPythonOverride)
-    {
-        lines.Add("MUESLI_PYTHON override is active. Fix that Python environment or clear the override to use the built-in setup flow.");
-    }
-    else if (setupScriptAvailable)
-    {
-        lines.Add("Local transcription setup still needs attention. Use Install local transcription runtime.");
-    }
-    else
-    {
-        lines.Add("Local transcription setup still needs attention, and the setup script is missing from this build.");
-    }
-
-    lines.Add(selectedModelCached
-        ? $"Whisper {SelectedModelProfile} is already cached for offline use."
-        : $"Download Whisper {SelectedModelProfile} before relying on offline transcription.");
-
-    if (!diarizationOk)
-    {
-        lines.Add("Speaker diarization is optional and still needs its extra runtime setup.");
-    }
-
-    return string.Join(Environment.NewLine, lines);
-}
-private async Task InstallLocalRuntimeAsync(Action<string>? onStatus = null, Action? onAfterRefresh = null)
-{
-    if (_isInstallingLocalRuntime)
-    {
-        return;
-    }
-
-    if (!CanInstallLocalRuntime)
-    {
-        var message = string.IsNullOrWhiteSpace(RuntimeSetupStatus)
-            ? "Local transcription runtime setup is not available."
-            : RuntimeSetupStatus;
-        onStatus?.Invoke(message);
-        return;
-    }
-
     try
     {
-        _isInstallingLocalRuntime = true;
-        RuntimeSetupStatus = "Preparing local transcription runtime...";
-        onStatus?.Invoke(RuntimeSetupStatus);
-        DictationStatus = "Installing local transcription runtime";
-        _toastNotificationService.Show("Installing runtime", "Preparing local transcription runtime", ToastState.Transcribing, 0);
-        _logService.Info("Starting local transcription runtime setup from onboarding.");
-
-        var result = await _runtimeDiagnosticsService.InstallLocalRuntimeAsync(progress =>
-        {
-            var message = MapRuntimeSetupProgress(progress);
-            if (message is null)
-            {
-                return;
-            }
-
-            RuntimeSetupStatus = message;
-            onStatus?.Invoke(message);
-        });
-
-        if (result.Detail.Length > 0)
-        {
-            _logService.Info($"Runtime setup output:{Environment.NewLine}{result.Detail}");
-        }
-
-        await RefreshRuntimeDiagnosticsAsync();
-        onAfterRefresh?.Invoke();
-
-        if (result.Success)
-        {
-            RuntimeSetupStatus = "Local transcription runtime installed. Check setup is now passing.";
-            onStatus?.Invoke(RuntimeSetupStatus);
-            DictationStatus = "Local transcription runtime installed";
-            _toastNotificationService.Show("Runtime ready", "Local transcription runtime installed", ToastState.Success, 3600);
-        }
-        else
-        {
-            RuntimeSetupStatus = "Runtime setup failed. Open logs for details.";
-            onStatus?.Invoke(RuntimeSetupStatus);
-            DictationStatus = "Runtime setup failed";
-            _toastNotificationService.Show("Runtime setup failed", result.Summary, ToastState.Error, 5200);
-        }
+        await _dictationCoordinator.SwitchModelAsync(modelId);
+        _logService.Info($"Dictation model role changed. model={modelId}; activation=selection-only; downloadStarted=false");
     }
     catch (Exception exception)
     {
-        RuntimeSetupStatus = "Runtime setup failed. Open logs for details.";
-        onStatus?.Invoke(RuntimeSetupStatus);
-        DictationStatus = $"Runtime setup failed: {exception.Message}";
-        _logService.Error("Runtime setup failed.", exception);
-        _toastNotificationService.Show("Runtime setup failed", "Open logs for details", ToastState.Error, 5200);
-    }
-    finally
-    {
-        _isInstallingLocalRuntime = false;
-        onAfterRefresh?.Invoke();
+        _logService.Error($"Could not switch the dictation model role to {modelId}.", exception);
+        DictationStatus = $"Could not switch dictation model: {ConciseUiError(exception)}";
     }
 }
-private static bool HasReadySignal(string status)
+
+private async Task SwitchFinalMeetingModelAsync(string modelId)
 {
-    if (string.IsNullOrWhiteSpace(status))
+    try
     {
+        await _meetingTranscriptionClient.SwitchModelAsync(modelId);
+        _logService.Info($"Final meeting model role changed. model={modelId}; activation=selection-only; downloadStarted=false");
+    }
+    catch (Exception exception)
+    {
+        _logService.Error($"Could not switch the final meeting model role to {modelId}.", exception);
+        DictationStatus = $"Could not switch final meeting model: {ConciseUiError(exception)}";
+    }
+}
+
+private async Task ReleaseTranscriptionModelAsync(string modelId, CancellationToken cancellationToken)
+{
+    await _dictationCoordinator.ReleaseModelAsync(modelId, cancellationToken);
+    await _meetingTranscriptionClient.ReleaseModelAsync(modelId, cancellationToken);
+}
+
+private void OnTranscriptionModelChanged(object? sender, string modelId)
+{
+    if (!Dispatcher.CheckAccess())
+    {
+        Dispatcher.BeginInvoke(() => OnTranscriptionModelChanged(sender, modelId));
+        return;
+    }
+
+    OnPropertyChanged(nameof(SelectedModelCacheStatus));
+    OnPropertyChanged(nameof(FinalMeetingModelStatus));
+    RefreshModelItems();
+}
+
+private void RefreshModelItems()
+{
+    foreach (var item in TranscriptionModelItems)
+    {
+        item.Apply(_modelLifecycle.Snapshot(item.Id));
+    }
+    OnPropertyChanged(nameof(SelectedModelCacheStatus));
+    OnPropertyChanged(nameof(FinalMeetingModelStatus));
+}
+
+private void OnStreamingModelChanged(object? sender, string modelId)
+{
+    if (!Dispatcher.CheckAccess())
+    {
+        Dispatcher.BeginInvoke(() => OnStreamingModelChanged(sender, modelId));
+        return;
+    }
+    RefreshStreamingModelItems();
+}
+
+private void RefreshStreamingModelItems()
+{
+    foreach (var item in StreamingModelItems) item.Apply(_streamingModelLifecycle.Snapshot(item.Id));
+    OnPropertyChanged(nameof(LiveMeetingModelStatus));
+}
+
+private async void PrepareStreamingModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: StreamingModelItem item })
+        await RunStreamingModelOperationAsync(item, progress => _streamingModelLifecycle.PrepareAsync(item.Id, progress));
+}
+
+private void CancelStreamingModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: StreamingModelItem item }) _streamingModelLifecycle.Cancel(item.Id);
+}
+
+private async void RetryStreamingModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: StreamingModelItem item })
+        await RunStreamingModelOperationAsync(item, _ => _streamingModelLifecycle.RetryAsync(item.Id));
+}
+
+private async void VerifyStreamingModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: StreamingModelItem item })
+        await RunStreamingModelOperationAsync(item, progress => _streamingModelLifecycle.VerifyAsync(item.Id, progress));
+}
+
+private async void DeleteStreamingModelItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is not FrameworkElement { DataContext: StreamingModelItem item }) return;
+    if (System.Windows.MessageBox.Show(this, $"Delete {item.DisplayName}? The live role remains selected but will fail closed until prepared again.", "Delete live model", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+        await RunStreamingModelOperationAsync(item, _ => _streamingModelLifecycle.DeleteAsync(item.Id));
+}
+
+private void StreamingModelDiagnosticsItem_Click(object sender, RoutedEventArgs e)
+{
+    if (sender is FrameworkElement { DataContext: StreamingModelItem item })
+        System.Windows.MessageBox.Show(this, item.Diagnostics, $"{item.DisplayName} diagnostics", MessageBoxButton.OK, MessageBoxImage.Information);
+}
+
+private async Task RunStreamingModelOperationAsync(StreamingModelItem item, Func<IProgress<ModelDownloadProgress>, Task> operation)
+{
+    try
+    {
+        var progress = new Progress<ModelDownloadProgress>(value => { item.ProgressText = value.DisplayText; DictationStatus = value.DisplayText; });
+        await operation(progress);
+        DictationStatus = $"{item.DisplayName}: {_streamingModelLifecycle.Snapshot(item.Id).StatusText}. Live selection was unchanged.";
+    }
+    catch (OperationCanceledException) { DictationStatus = $"{item.DisplayName} operation cancelled"; }
+    catch (Exception exception)
+    {
+        DictationStatus = $"{item.DisplayName}: {ConciseUiError(exception)}";
+        _logService.Error($"Streaming model operation failed. model={item.Id}", exception);
+    }
+    finally { RefreshStreamingModelItems(); }
+}
+
+private async Task EnsureTranscriptionReadyAsync()
+{
+    try
+    {
+        if (!_dictationCoordinator.IsModelReady)
+        {
+            DictationStatus = $"{_dictationCoordinator.ModelDisplayName} needs preparation in Models";
+            _logService.Info($"Dictation model is not ready. model={_dictationCoordinator.ModelId}; automaticDownload=false");
+            return;
+        }
+        var warmup = await _dictationCoordinator.InitializeModelAsync();
+        DictationStatus = "Ready";
+        _logService.Info(
+            $"Transcription warmup complete. engine={_dictationCoordinator.EngineId}; model={_dictationCoordinator.ModelId}; {warmup.Text}; {warmup.Diagnostic?.Replace(Environment.NewLine, " | ")}");
+        await RefreshRuntimeDiagnosticsAsync();
+    }
+    catch (Exception exception)
+    {
+        DictationStatus = $"Transcription setup failed: {ConciseUiError(exception)}";
+        _logService.Error($"{_dictationCoordinator.ModelDisplayName} warmup failed without fallback.", exception);
+    }
+}
+
+private void ApplyRuntimeDiagnostics(RuntimeDiagnostics diagnostics)
+{
+    var status = RuntimeStatusMapper.Map(diagnostics);
+    NativeRuntimeStatus = status.RuntimeStatus;
+    SpeakerDiarizationStatusLabel = diagnostics.DiarizationStatus;
+    DictationModelRuntimeStatus = SelectedModelCacheStatus;
+    OnPropertyChanged(nameof(DictationModelStatusLabel));
+    OnPropertyChanged(nameof(SelectedModelCacheStatus));
+    QwenCleanupRuntimeStatus = diagnostics.QwenCleanupStatus;
+    OnPropertyChanged(nameof(QwenCleanupStatusLabel));
+    GpuRuntimeStatus = status.ProviderStatus;
+    DiarizationDependencyStatus = SpeakerDiarizationStatusLabel;
+    DiarizationTokenStatus = "Not required";
+    RuntimeSetupStatus = status.Readiness;
+    SetupReadiness = BuildSetupReadiness(diagnostics);
+}
+private string BuildSetupReadiness(RuntimeDiagnostics diagnostics)
+{
+    var lines = new List<string>();
+    lines.Add(diagnostics.RuntimeReady
+        ? "Native transcription runtime is ready."
+        : "Native transcription runtime needs attention.");
+    lines.Add(diagnostics.ModelReady
+        ? $"{ActiveModelLabel} is cached for offline use."
+        : $"{ActiveModelLabel} is not ready. Prepare it explicitly from Models.");
+    lines.Add($"Execution provider: {diagnostics.Acceleration} (selected automatically). ");
+
+    lines.Add("Native speaker diarization uses ONNX models and downloads them on first meeting transcription if missing.");
+    lines.Add(EnableLocalCleanup
+        ? $"Local Qwen cleanup: {NativeTextCleanupService.Status(true)}."
+        : "Local Qwen cleanup is disabled. Turn it on in Settings after placing a GGUF model in the native-cleanup cache.");
+
+    return string.Join(Environment.NewLine, lines);
+}
+private static bool ShouldUseSavedMicrophone(string? microphoneName)
+{
+    return !string.IsNullOrWhiteSpace(microphoneName);
+}
+
+private static bool IsValidHookExecutable(string? path)
+{
+    if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path)) return false;
+    return string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(path);
+}
+
+private static bool IsValidAutoExportDirectory(string? path) =>
+    !string.IsNullOrWhiteSpace(path) && Path.IsPathRooted(path);
+
+private static string HookTranscriptPolicyDisplay(string? value) => value?.Trim().ToLowerInvariant() switch
+{
+    "inline" => "Inline transcript",
+    "auto-export-path" => "Auto-export path",
+    _ => "Metadata only"
+};
+
+private static string HookTranscriptPolicySetting(string? value) => value switch
+{
+    "Inline transcript" => "inline",
+    "Auto-export path" => "auto-export-path",
+    _ => "metadata-only"
+};
+
+private static string AutoExportContentDisplay(string? value) => value?.Trim().ToLowerInvariant() switch
+{
+    "transcript" => "Transcript",
+    "full-meeting" => "Full meeting",
+    _ => "Notes"
+};
+
+private static string AutoExportContentSetting(string? value) => value switch
+{
+    "Transcript" => "transcript",
+    "Full meeting" => "full-meeting",
+    _ => "notes"
+};
+
+private static string ComputerUseProviderDisplay(string? value) => value?.Trim().ToLowerInvariant() switch
+{
+    "openai" => "OpenAI",
+    _ => "None"
+};
+
+private static string ComputerUseProviderSetting(string? value) => value switch
+{
+    "OpenAI" => "openai",
+    _ => "none"
+};
+
+private static string ComputerUseBrowserInterfaceDisplay(string? value) => value?.Trim().ToLowerInvariant() switch
+{
+    "loopback-devtools" => "Loopback DevTools",
+    _ => "Disabled"
+};
+
+private static string ComputerUseBrowserInterfaceSetting(string? value) => value switch
+{
+    "Loopback DevTools" => "loopback-devtools",
+    _ => "none"
+};
+
+private static string NormalizeAllowlistText(string? value) => string.Join("; ",
+    (value ?? "")
+    .Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(entry => entry.ToLowerInvariant())
+    .Distinct(StringComparer.OrdinalIgnoreCase));
+
+private static string[] ParseAllowlist(string? value) => (value ?? "")
+    .Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(entry => entry.ToLowerInvariant())
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+
+private bool ComputerUseConfigurationIsReady(out string error)
+{
+    if (!SelectedComputerUsePlannerProvider.Equals("OpenAI", StringComparison.Ordinal))
+    {
+        error = "Choose the OpenAI planner provider explicitly.";
         return false;
     }
-
-    return status.Contains("OK", StringComparison.OrdinalIgnoreCase) ||
-           status.Contains("ready", StringComparison.OrdinalIgnoreCase) ||
-           status.Contains("installed", StringComparison.OrdinalIgnoreCase);
-}
-private static string? MapRuntimeSetupProgress(string rawLine)
-{
-    if (string.IsNullOrWhiteSpace(rawLine))
+    if (string.IsNullOrWhiteSpace(ComputerUsePlannerModel))
     {
+        error = "Choose a planner model explicitly.";
+        return false;
+    }
+    if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENAI_API_KEY")) &&
+        string.IsNullOrWhiteSpace(OpenAIApiKey))
+    {
+        error = "Configure the OpenAI key before enabling Computer Use.";
+        return false;
+    }
+    if (ParseAllowlist(ComputerUseAllowedApplications).Length == 0)
+    {
+        error = "Allow at least one application before enabling Computer Use.";
+        return false;
+    }
+    if (ComputerUseIncludeWindowText || ComputerUseIncludeBrowserPageText || ComputerUseIncludeScreenshots)
+    {
+        error = "Text, page-text, and screenshot observation remain unavailable until scoped masking is verified. Leave those privacy options off.";
+        return false;
+    }
+    error = "";
+    return true;
+}
+
+private void DisableComputerUseIfConfigurationBecameInvalid()
+{
+    if (!_computerUseEnabled || ComputerUseConfigurationIsReady(out var error)) return;
+    _computerUseEnabled = false;
+    OnPropertyChanged(nameof(ComputerUseEnabled));
+    ComputerUseStatusText = error;
+}
+
+private ComputerUsePlannerService CreateComputerUsePlannerService()
+{
+    Func<ComputerUseWindowTarget?> target = () => _computerUseApprovedTarget;
+    var browserSessions = new List<KeyValuePair<string, IExplicitBrowserSession>>();
+    var browserContextSessions = new List<LoopbackDevToolsBrowserSession>();
+    if (SelectedComputerUseBrowserInterface == "Loopback DevTools" &&
+        Uri.TryCreate(ComputerUseBrowserEndpoint, UriKind.Absolute, out var devToolsEndpoint) &&
+        devToolsEndpoint.Scheme == Uri.UriSchemeHttp && devToolsEndpoint.IsLoopback)
+    {
+        foreach (var domain in ParseAllowlist(ComputerUseAllowedBrowserDomains))
+        {
+            try
+            {
+                var session = new LoopbackDevToolsBrowserSession(_computerUseHttpClient, devToolsEndpoint.Port, domain);
+                browserSessions.Add(new KeyValuePair<string, IExplicitBrowserSession>(
+                    domain,
+                    session));
+                browserContextSessions.Add(session);
+            }
+            catch (ArgumentException)
+            {
+                // Invalid domains are omitted from the capability registry and fail closed.
+            }
+        }
+    }
+    async Task<string?> CaptureBrowserContextAsync(CancellationToken cancellationToken)
+    {
+        var approvedTarget = target();
+        if (approvedTarget is null || approvedTarget.ApplicationId is not ("chrome" or "msedge")) return null;
+        foreach (var session in browserContextSessions)
+        {
+            var fingerprint = await session.CaptureContextFingerprintAsync(cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(fingerprint)) return fingerprint;
+        }
         return null;
     }
-
-    var line = rawLine.Trim();
-    if (line.Contains("Supported Python launcher found", StringComparison.OrdinalIgnoreCase))
+    var observations = new WindowsUiAutomationObservationSource(
+        target,
+        browserContextSessions.Count == 0 ? null : CaptureBrowserContextAsync);
+    var local = new WindowsUiAutomationLocalAdapter(target);
+    IBrowserAutomationAdapter browser = new RegisteredBrowserAutomationAdapter(browserSessions);
+    var executor = new WindowsUiAutomationExecutor(browser, local);
+    var planner = new OpenAiResponsesPlannerProvider(
+        _computerUseHttpClient,
+        () => Environment.GetEnvironmentVariable("OPENAI_API_KEY") is { Length: > 0 } environmentKey
+            ? environmentKey
+            : OpenAIApiKey);
+    var status = new DelegateComputerUseStatusSink(value => Dispatcher.BeginInvoke(() =>
     {
-        return "Found a supported Python runtime.";
-    }
-
-    if (line.Contains("Collecting", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("Downloading", StringComparison.OrdinalIgnoreCase))
-    {
-        return "Downloading Python packages...";
-    }
-
-    if (line.Contains("Installing collected packages", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("Successfully installed", StringComparison.OrdinalIgnoreCase))
-    {
-        return "Installing transcription dependencies...";
-    }
-
-    if (line.Contains("Requirement already satisfied", StringComparison.OrdinalIgnoreCase))
-    {
-        return "Checking installed transcription dependencies...";
-    }
-
-    if (line.Contains("Muesli worker runtime is ready", StringComparison.OrdinalIgnoreCase))
-    {
-        return "Local transcription runtime is ready.";
-    }
-
-    return null;
+        ComputerUseStatusText = value.ActionCount > 0
+            ? $"{value.Message} Action {value.ActionNumber} of {value.ActionCount}."
+            : value.Message;
+    }));
+    var confirmation = new DelegateComputerUseConfirmation((action, cancellationToken) =>
+        Dispatcher.InvokeAsync(() => ComputerUseConfirmationPrompt.ShowAsync(this, action, cancellationToken)).Task.Unwrap());
+    var visualizer = new DelegateComputerUseActionVisualizer((action, targetElement, cancellationToken) =>
+        Dispatcher.InvokeAsync(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var location = targetElement is null
+                ? ""
+                : $" at ({targetElement.Left}, {targetElement.Top})";
+            ComputerUseStatusText = $"Proposed {action.Kind}{location}; validating policy and confirmation.";
+            _toastNotificationService.Show("Computer Use action", $"{action.Kind}{location}", ToastState.Transcribing, 0);
+        }).Task);
+    return new ComputerUsePlannerService(observations, planner, executor, confirmation, status, visualizer);
 }
-private static bool HasValidPythonOverride()
+
+private ComputerUseOptions CurrentComputerUseOptions()
 {
-    var path = Environment.GetEnvironmentVariable("MUESLI_PYTHON");
-    return !string.IsNullOrWhiteSpace(path) && File.Exists(path);
+    var plannerTimeout = TimeSpan.FromSeconds(Math.Clamp(ComputerUsePlannerTimeoutSeconds, 5, 120));
+    var perActionTimeout = TimeSpan.FromSeconds(Math.Clamp(ComputerUsePerActionTimeoutSeconds, 1, 30));
+    var maximumActions = Math.Clamp(ComputerUseMaximumActionCount, 1, 20);
+    var overallSeconds = Math.Clamp(
+        (int)plannerTimeout.TotalSeconds + maximumActions * (int)perActionTimeout.TotalSeconds + 30,
+        10,
+        300);
+    return new ComputerUseOptions
+    {
+        Enabled = ComputerUseEnabled,
+        Provider = ComputerUsePlannerProvider.OpenAI,
+        Model = ComputerUsePlannerModel,
+        PlannerTimeout = plannerTimeout,
+        OverallTimeout = TimeSpan.FromSeconds(overallSeconds),
+        PerActionTimeout = perActionTimeout,
+        MaximumActionCount = maximumActions,
+        AllowedApplications = ParseAllowlist(ComputerUseAllowedApplications),
+        AllowedBrowserDomains = ParseAllowlist(ComputerUseAllowedBrowserDomains),
+        Privacy = new ComputerUsePrivacyOptions
+        {
+            IncludeWindowText = ComputerUseIncludeWindowText,
+            IncludeBrowserPageText = ComputerUseIncludeBrowserPageText,
+            IncludeScreenshots = false,
+            UserApprovedScreenCapture = false
+        }
+    };
 }
+
+private static string ComputerUseTracePath() => Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+    "muesli",
+    "computer-use",
+    "trace.json");
+
+private static string DescribeComputerUseResult(ComputerUseRunResult result) => result.Status switch
+{
+    ComputerUseRunStatus.Completed => $"Computer Use completed {result.Trace.Count} validated action(s).",
+    ComputerUseRunStatus.Disabled => "Computer Use is disabled; nothing was planned or executed.",
+    ComputerUseRunStatus.Rejected => result.Error ?? "The planner response or context was rejected.",
+    ComputerUseRunStatus.Cancelled => "Computer Use was stopped or a required confirmation was declined.",
+    ComputerUseRunStatus.TimedOut => "Computer Use timed out; no further actions were sent.",
+    ComputerUseRunStatus.StaleObservation => "The target changed; no further actions were sent.",
+    _ => result.Error ?? "Computer Use failed safely; no further actions were sent."
+};
+
 private MuesliSettings CurrentSettingsSnapshot()
 {
     return new MuesliSettings
     {
         Hotkey = SelectedHotkey,
         UserName = UserName,
-        AsrEngine = SelectedAsrEngine,
-        ModelProfile = SelectedModelProfile,
         PasteBehavior = SelectedPasteBehavior,
+        DictationModelId = SelectedTranscriptionModel.Id,
+        FinalMeetingModelId = SelectedFinalMeetingModel.Id,
+        LiveMeetingModelId = SelectedLiveMeetingModel.Id,
+        LiveTranscriptOwnership = LiveTranscriptOwnershipDescriptor.SettingValueFor(SelectedOwnershipMode),
+        ShowLiveWaveformOnHover = ShowLiveWaveformOnHover,
         OnboardingCompleted = _onboardingCompleted,
-        PostProcessingEnabled = PostProcessingEnabled,
+        LastCompletedFeatureTourVersion = _lastCompletedFeatureTourVersion,
         EnableDoubleTapDictation = EnableDoubleTapDictation,
-        PostProcessingPrompt = PostProcessingPrompt,
+        RemoveFillerWords = RemoveFillerWords,
+        EnableLocalCleanup = EnableLocalCleanup,
         StartAtLogin = StartAtLogin,
         AutoMeetingDetectionEnabled = AutoMeetingDetectionEnabled,
         MeetingSummaryProvider = SelectedSummaryProvider,
+        OllamaEndpoint = _ollamaEndpoint,
+        OllamaModel = _ollamaModel,
         MeetingSummaryTemplate = SelectedSummaryTemplate,
         MeetingSummaryPromptOverride = CustomMeetingTemplates.FirstOrDefault(template =>
             template.Name.Equals(SelectedSummaryTemplate, StringComparison.OrdinalIgnoreCase))?.Prompt ?? "",
         OpenDashboardOnLaunch = OpenDashboardOnLaunch,
         SaveMeetingRecordings = SaveMeetingRecordings,
+        PostMeetingHookEnabled = PostMeetingHookEnabled,
+        PostMeetingHookExecutablePath = PostMeetingHookExecutablePath,
+        PostMeetingHookTranscriptPolicy = HookTranscriptPolicySetting(SelectedHookTranscriptPolicy),
+        PostMeetingHookTimeoutSeconds = PostMeetingHookTimeoutSeconds,
+        PostMeetingHookMaxAttempts = PostMeetingHookMaxAttempts,
+        AutoExportMarkdownEnabled = AutoExportMarkdownEnabled,
+        AutoExportMarkdownDirectory = AutoExportMarkdownDirectory,
+        AutoExportMarkdownContent = AutoExportContentSetting(SelectedAutoExportContent),
+        ComputerUseEnabled = ComputerUseEnabled,
+        ComputerUsePlannerProvider = ComputerUseProviderSetting(SelectedComputerUsePlannerProvider),
+        ComputerUsePlannerModel = ComputerUsePlannerModel,
+        ComputerUsePlannerTimeoutSeconds = ComputerUsePlannerTimeoutSeconds,
+        ComputerUsePerActionTimeoutSeconds = ComputerUsePerActionTimeoutSeconds,
+        ComputerUseMaximumActionCount = ComputerUseMaximumActionCount,
+        ComputerUseAllowedApplications = ComputerUseAllowedApplications,
+        ComputerUseAllowedBrowserDomains = ComputerUseAllowedBrowserDomains,
+        ComputerUseIncludeWindowText = ComputerUseIncludeWindowText,
+        ComputerUseIncludeScreenshots = ComputerUseIncludeScreenshots,
+        ComputerUseIncludeBrowserPageText = ComputerUseIncludeBrowserPageText,
+        ComputerUseBrowserInterface = ComputerUseBrowserInterfaceSetting(SelectedComputerUseBrowserInterface),
+        ComputerUseBrowserEndpoint = ComputerUseBrowserEndpoint,
         ShowFloatingIndicator = ShowFloatingIndicator,
         IndicatorAnchor = SelectedIndicatorPosition,
-        OpenAIApiKey = OpenAIApiKey,
+        ResolvedOpenAIApiKey = OpenAIApiKey,
         OpenAIModel = OpenAIModel,
-        OpenRouterApiKey = OpenRouterApiKey,
+        ResolvedOpenRouterApiKey = OpenRouterApiKey,
         OpenRouterModel = OpenRouterModel,
         Theme = _theme,
         MicrophoneName = SelectedMicrophone,
@@ -3931,6 +6381,50 @@ public System.Windows.Visibility CrashReportingRestartHintVisible =>
     _crashReportingEnabled != _crashReportingStartupValue
         ? System.Windows.Visibility.Visible
         : System.Windows.Visibility.Collapsed;
+
+private PostMeetingAutomationOptions CurrentPostMeetingAutomationOptions() => new()
+{
+    HookEnabled = PostMeetingHookEnabled,
+    HookExecutablePath = PostMeetingHookExecutablePath,
+    AutoExportEnabled = AutoExportMarkdownEnabled,
+    AutoExportDirectory = AutoExportMarkdownDirectory,
+    AutoExportMode = AutoExportContentSetting(SelectedAutoExportContent) switch
+    {
+        "transcript" => MeetingExportMode.Transcript,
+        "full-meeting" => MeetingExportMode.FullMeeting,
+        _ => MeetingExportMode.Notes
+    },
+    TranscriptPolicy = HookTranscriptPolicySetting(SelectedHookTranscriptPolicy) switch
+    {
+        "inline" => PostMeetingTranscriptPolicy.Inline,
+        "auto-export-path" => PostMeetingTranscriptPolicy.AutoExportPath,
+        _ => PostMeetingTranscriptPolicy.MetadataOnly
+    },
+    Timeout = TimeSpan.FromSeconds(Math.Clamp(PostMeetingHookTimeoutSeconds, 1, 600)),
+    RetryPolicy = new PostMeetingRetryPolicy
+    {
+        MaxAttempts = Math.Clamp(PostMeetingHookMaxAttempts, 1, 3),
+        Delay = TimeSpan.FromMilliseconds(500)
+    }
+};
+
+private static string DescribeAutomationResult(PostMeetingAutomationResult result)
+{
+    var export = result.Export.Completed
+        ? "Markdown exported. "
+        : result.Export.Requested
+            ? "Markdown export failed. "
+            : "";
+    return result.Status switch
+    {
+        PostMeetingAutomationStatus.Disabled => "Automation is disabled; no process was launched and no export was written.",
+        PostMeetingAutomationStatus.Succeeded => $"{export}Post-meeting automation completed safely.",
+        PostMeetingAutomationStatus.TimedOut => $"{export}The hook timed out and its process tree was terminated.",
+        PostMeetingAutomationStatus.Cancelled => $"{export}Post-meeting automation was cancelled and its process tree was terminated.",
+        PostMeetingAutomationStatus.InvalidConfiguration => $"{export}{result.Error ?? "Automation is disabled until its path is fixed."}",
+        _ => $"{export}{result.Error ?? "Post-meeting automation failed; the meeting remains saved."}"
+    };
+}
 private void OnIndicatorPositionChanged(object? sender, IndicatorPositionChangedEventArgs e)
 {
     _indicatorLeft = e.Left;
@@ -4034,17 +6528,21 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
 
     _meetingPromptService.Show(
         meeting,
-        () => Dispatcher.InvokeAsync(() => ToggleMeetingRecordingAsync(meeting.Title)),
+        () => Dispatcher.InvokeAsync(() => ToggleMeetingRecordingAsync(meeting)),
         () =>
         {
             _ignoredMeetingPrompts[meeting.Key] = DateTime.Now.AddMinutes(30);
-            DictationStatus = "Meeting prompt ignored";
+            // Tell the detector too, otherwise it keeps re-confirming this candidate and the
+            // 30-minute window is the only thing suppressing a prompt the user already refused.
+            _meetingDetectionService.DismissCandidate(meeting.Key);
+            DictationStatus = "Meeting prompt dismissed";
         });
 }
     private void OnMeetingDetectionScanCompleted(object? sender, MeetingDetectionScan scan)
     {
         Dispatcher.Invoke(() =>
         {
+            _lastMeetingDetectionScan = scan;
             MeetingDetectionStatus = scan.Found
                 ? scan.Summary
                 : $"No meeting found. {scan.Summary}";
@@ -4055,6 +6553,7 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
     {
         AutoMeetingDetectionEnabled = true;
         var scan = _meetingDetectionService.CheckNow();
+        _lastMeetingDetectionScan = scan;
         MeetingDetectionStatus = scan.Found
             ? scan.Summary
             : $"No meeting found. {scan.Summary}";
@@ -4075,6 +6574,7 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
 
     private void SaveSettings()
     {
+        if (_isVisualPreview) return;
         _settingsStore.Save(CurrentSettingsSnapshot());
     }
 
@@ -4111,7 +6611,19 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
                 meeting.WordCount,
                 meeting.TemplateName,
                 meeting.SpeakerAliases,
-                MeetingRecordingCoordinator.CleanupHealthWarnings(meeting.HealthWarnings, meeting.Transcript)));
+                MeetingRecordingCoordinator.CleanupHealthWarnings(meeting.HealthWarnings, meeting.Transcript),
+                meeting.SessionState,
+                meeting.MicrophoneAudioPath,
+                meeting.SystemAudioPath,
+                meeting.SystemCaptureMode,
+                meeting.RecoveredFromInterruption,
+                meeting.LivePreviewModelId,
+                meeting.LiveTranscriptOwnership,
+                meeting.FinalTranscriptOwnerModelId,
+                meeting.GapRecoveryModelId,
+                meeting.ManualNotes,
+                meeting.TitleIsManual,
+                meeting.AutomationResult));
         }
 
         foreach (var entry in _dataStore.LoadDictionary())
@@ -4133,20 +6645,29 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
         OnPropertyChanged(nameof(DayStreak));
     }
 
-    private void SaveDictations()
+    private void SaveDictations(bool afterExplicitDeletion = false)
     {
-        _dataStore.SaveDictations(Dictations.Select(item => new PersistedDictation(
+        var dictations = Dictations.Select(item => new PersistedDictation(
             item.Id,
             item.Timestamp,
             item.Text,
             item.DurationMs,
-            item.ModelProfile)));
+            item.ModelProfile));
+        if (afterExplicitDeletion)
+        {
+            _dataStore.SaveDictationsAfterDeletion(dictations);
+        }
+        else
+        {
+            _dataStore.SaveDictations(dictations);
+        }
     }
 
-    private void SaveMeetings()
+    private void SaveMeetings(bool afterExplicitDeletion = false)
     {
-        _dataStore.SaveMeetings(Meetings.Select(item => new PersistedMeeting
+        var meetings = Meetings.Select(item => new PersistedMeeting
         {
+            SchemaVersion = AppDataStore.CurrentMeetingSchemaVersion,
             Id = item.Id,
             Title = item.Title,
             CreatedAt = item.CreatedAt,
@@ -4159,8 +6680,28 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
             WordCount = item.WordCount,
             TemplateName = item.TemplateName,
             SpeakerAliases = item.SpeakerAliases ?? new Dictionary<string, string>(),
-            HealthWarnings = MeetingRecordingCoordinator.CleanupHealthWarnings(item.HealthWarnings, item.Transcript)
-        }));
+            HealthWarnings = MeetingRecordingCoordinator.CleanupHealthWarnings(item.HealthWarnings, item.Transcript),
+            SessionState = item.SessionState,
+            MicrophoneAudioPath = item.MicrophoneAudioPath,
+            SystemAudioPath = item.SystemAudioPath,
+            SystemCaptureMode = item.SystemCaptureMode,
+            RecoveredFromInterruption = item.RecoveredFromInterruption,
+            LivePreviewModelId = item.LivePreviewModelId,
+            LiveTranscriptOwnership = item.LiveTranscriptOwnership,
+            FinalTranscriptOwnerModelId = item.FinalTranscriptOwnerModelId,
+            GapRecoveryModelId = item.GapRecoveryModelId,
+            ManualNotes = item.ManualNotes,
+            TitleIsManual = item.TitleIsManual,
+            AutomationResult = item.AutomationResult
+        });
+        if (afterExplicitDeletion)
+        {
+            _dataStore.SaveMeetingsAfterDeletion(meetings);
+        }
+        else
+        {
+            _dataStore.SaveMeetings(meetings);
+        }
     }
 
     private static int CountWords(string text)
@@ -4212,38 +6753,12 @@ private void OnMeetingDetected(object? sender, DetectedMeeting meeting)
 
     private static string ApplySpeakerAliases(string transcript, Dictionary<string, string> aliases)
     {
-        if (string.IsNullOrWhiteSpace(transcript) || aliases.Count == 0)
-            return transcript;
-
-        var result = transcript;
-        foreach (var pair in aliases.OrderByDescending(p => p.Key.Length))
-        {
-            if (!string.IsNullOrWhiteSpace(pair.Value) && pair.Key != pair.Value)
-            {
-                result = result.Replace(pair.Key, pair.Value);
-            }
-        }
-
-        return result;
+        return SpeakerAliasService.Apply(transcript, aliases);
     }
 
     private static string ApplySpeakerAliasesToNotes(string notes, Dictionary<string, string> aliases)
     {
-        if (string.IsNullOrWhiteSpace(notes) || aliases.Count == 0)
-            return notes;
-
-        var result = notes;
-        foreach (var pair in aliases.OrderByDescending(p => p.Key.Length))
-        {
-            if (string.IsNullOrWhiteSpace(pair.Value) || pair.Key == pair.Value)
-                continue;
-
-            var escaped = System.Text.RegularExpressions.Regex.Escape(pair.Key);
-            var pattern = new System.Text.RegularExpressions.Regex($@"(?<!\w){escaped}(?!\w)");
-            result = pattern.Replace(result, pair.Value);
-        }
-
-        return result;
+        return SpeakerAliasService.Apply(notes, aliases);
     }
 
     private static List<string> DetectSpeakerLabels(string transcript)
@@ -4331,11 +6846,27 @@ public sealed record MeetingItem(
     Dictionary<string, string>? SpeakerAliases = null,
     List<string>? HealthWarnings = null,
     MeetingSessionState SessionState = MeetingSessionState.Completed,
+    string? MicrophoneAudioPath = null,
+    string? SystemAudioPath = null,
+    string SystemCaptureMode = "legacy-unknown",
+    bool RecoveredFromInterruption = false,
+    string? LivePreviewModelId = null,
+    string LiveTranscriptOwnership = "off",
+    string FinalTranscriptOwnerModelId = "",
+    string? GapRecoveryModelId = null,
     string ManualNotes = "",
-    PostMeetingAutomationResult? AutomationResult = null,
-    bool RecoveredFromInterruption = false)
+    bool TitleIsManual = false,
+    PostMeetingAutomationResult? AutomationResult = null)
 {
-    public string Metadata => $"{CreatedAt:yyyy-MM-dd HH:mm} • {DurationLabel}";
+    public string Metadata => $"{CreatedAt:yyyy-MM-dd HH:mm} • {DurationLabel} • {SessionStateLabel}";
+    public string SessionStateLabel => SessionState switch
+    {
+        MeetingSessionState.Completed => RecoveredFromInterruption ? "Recovered" : "Completed",
+        MeetingSessionState.Failed => "Needs attention",
+        MeetingSessionState.RecoverableInterruption => "Recoverable",
+        MeetingSessionState.Cancelled => "Cancelled",
+        _ => SessionState.ToString()
+    };
 
     public string DurationLabel
     {
@@ -4554,5 +7085,111 @@ public sealed class DictionaryEntryItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Display)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Record)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ThresholdDisplay)));
+    }
+}
+
+public sealed class TranscriptionModelItem : INotifyPropertyChanged
+{
+    private TranscriptionModelSnapshot _snapshot;
+    private string _progressText = "";
+
+    public TranscriptionModelItem(TranscriptionModelSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string Id => _snapshot.Model.Id;
+    public string DisplayName => _snapshot.Model.DisplayName;
+    public string Summary => _snapshot.Model.Summary;
+    public string Languages => _snapshot.Model.Languages;
+    public string DownloadSize => _snapshot.Model.SizeLabel;
+    public string StatusText => string.IsNullOrWhiteSpace(ProgressText) ? _snapshot.StatusText : ProgressText;
+    public string DiskSize => _snapshot.DiskSize;
+    public string Diagnostics => _snapshot.Diagnostics;
+    public bool CanPrepare => _snapshot.CanPrepare;
+    public bool CanCancel => _snapshot.CanCancel;
+    public bool CanRetry => _snapshot.CanRetry;
+    public bool CanVerify => _snapshot.CanVerify;
+    public bool CanDelete => _snapshot.CanDelete;
+
+    public string ProgressText
+    {
+        get => _progressText;
+        set
+        {
+            if (_progressText == value) return;
+            _progressText = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ProgressText)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusText)));
+        }
+    }
+
+    public void Apply(TranscriptionModelSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        if (!snapshot.IsBusy)
+        {
+            _progressText = "";
+        }
+        foreach (var property in new[]
+                 {
+                     nameof(StatusText), nameof(DiskSize), nameof(Diagnostics), nameof(CanPrepare),
+                     nameof(CanCancel), nameof(CanRetry), nameof(CanVerify), nameof(CanDelete), nameof(ProgressText)
+                 })
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(property));
+        }
+    }
+}
+
+public sealed record LiveModelChoice(string? Id, string Label)
+{
+    public static LiveModelChoice Off { get; } = new(null, LiveTranscriptOwnershipDescriptor.OffOwnerLabel);
+
+    /// <summary>
+    /// The shared ComboBox template renders <c>SelectionBoxItem</c> without
+    /// <c>SelectionBoxItemTemplate</c>, so the closed picker falls back to <c>ToString()</c>.
+    /// Picker records in this app override it for that reason.
+    /// </summary>
+    public override string ToString() => Label;
+}
+
+public sealed class StreamingModelItem : INotifyPropertyChanged
+{
+    private StreamingModelSnapshot _snapshot;
+    private string _progressText = "";
+    public StreamingModelItem(StreamingModelSnapshot snapshot) => _snapshot = snapshot;
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string Id => _snapshot.Model.Id;
+    public string DisplayName => _snapshot.Model.DisplayName;
+    public string Summary => _snapshot.Model.Summary;
+    public string Languages => _snapshot.Model.Languages;
+    public string DownloadSize => _snapshot.Model.SizeLabel;
+    public string StatusText => string.IsNullOrWhiteSpace(ProgressText) ? _snapshot.StatusText : ProgressText;
+    public string DiskSize => _snapshot.DiskSize;
+    public string Diagnostics => _snapshot.Diagnostics;
+    public bool CanPrepare => _snapshot.CanPrepare;
+    public bool CanCancel => _snapshot.CanCancel;
+    public bool CanRetry => _snapshot.CanRetry;
+    public bool CanVerify => _snapshot.CanVerify;
+    public bool CanDelete => _snapshot.CanDelete;
+    public string ProgressText
+    {
+        get => _progressText;
+        set
+        {
+            if (_progressText == value) return;
+            _progressText = value;
+            PropertyChanged?.Invoke(this, new(nameof(ProgressText)));
+            PropertyChanged?.Invoke(this, new(nameof(StatusText)));
+        }
+    }
+    public void Apply(StreamingModelSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        if (!snapshot.IsBusy) _progressText = "";
+        foreach (var property in new[] { nameof(StatusText), nameof(DiskSize), nameof(Diagnostics), nameof(CanPrepare), nameof(CanCancel), nameof(CanRetry), nameof(CanVerify), nameof(CanDelete), nameof(ProgressText) })
+            PropertyChanged?.Invoke(this, new(property));
     }
 }

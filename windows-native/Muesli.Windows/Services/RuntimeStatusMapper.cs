@@ -2,7 +2,7 @@ namespace Muesli.Windows.Services;
 
 public static class RuntimeStatusMapper
 {
-    public static RuntimeUiStatus Map(RuntimeReadinessSnapshot? diagnostics, Exception? failure = null)
+    public static RuntimeUiStatus Map(RuntimeDiagnostics? diagnostics, Exception? failure = null)
     {
         if (failure is not null || diagnostics is null)
         {
@@ -30,9 +30,3 @@ public sealed record RuntimeUiStatus(
     string ModelStatus,
     string ProviderStatus,
     string Readiness);
-
-public sealed record RuntimeReadinessSnapshot(
-    bool RuntimeReady,
-    bool ModelReady,
-    string DictationModelName,
-    string Acceleration);
