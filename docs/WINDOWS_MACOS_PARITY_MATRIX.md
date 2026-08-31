@@ -6,9 +6,9 @@ Scope: authoritative inventory established in Phase 0 and updated through the bo
 
 Windows target: `windows-native/Muesli.Windows` (`net8.0-windows`, WPF, x64).
 
-macOS reference: `C:/Users/madha/Downloads/muesli-main/muesli-main`.
+macOS reference: local checkout of the macOS repo (`muesli-main`) at a developer-chosen path.
 
-Product reference: `C:/Users/madha/.codex/attachments/29153153-e376-4f1d-9d12-1e7c7808b737/pasted-text.txt`.
+Product reference: internal product notes (not stored in this repository).
 
 ## How to read this document
 
