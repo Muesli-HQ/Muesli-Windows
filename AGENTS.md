@@ -19,7 +19,7 @@
 - No placeholders or fake data
 
 ### Testing Workflow
-- **After every project update made by Codex, automatically launch or relaunch Muesli with its dashboard visibly open and foregrounded before reporting completion. Do not wait for the user to ask, and do not use a hidden-window launch.**
+- **After every project update made by an agent, automatically launch or relaunch Muesli with its dashboard visibly open and foregrounded before reporting completion. Do not wait for the user to ask, and do not use a hidden-window launch.**
 - For source or project-file changes, rebuild first; for documentation or workflow-only changes, reuse the current successful build unless a rebuild is relevant.
 - Kill running `Muesli.exe` before building when needed
 - Build with `dotnet build --no-restore`
