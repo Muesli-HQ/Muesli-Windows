@@ -19,9 +19,19 @@
 - No placeholders or fake data
 
 ### Testing Workflow
+- **After every project update made by an agent, automatically launch or relaunch Muesli with its dashboard visibly open and foregrounded before reporting completion. Do not wait for the user to ask, and do not use a hidden-window launch.**
+- For source or project-file changes, rebuild first; for documentation or workflow-only changes, reuse the current successful build unless a rebuild is relevant.
 - Kill running `Muesli.exe` before building when needed
 - Build with `dotnet build --no-restore`
 - Run executable directly from `bin/Debug/net8.0-windows/`
+- After any code fix that affects the WPF app, build and launch Muesli before reporting completion.
+- Kill existing `Muesli.exe` before build/launch when needed.
+- Use:
+  `dotnet build windows-native\Muesli.Windows\Muesli.Windows.csproj --no-restore`
+- Launch with Start-Process so the shell does not block:
+  `Start-Process -FilePath "C:\Users\madha\projects\muesli\windows-native\Muesli.Windows\bin\Debug\net8.0-windows\Muesli.exe" -WorkingDirectory "C:\Users\madha\projects\muesli\windows-native\Muesli.Windows\bin\Debug\net8.0-windows"`
+- After launch, inspect the latest `%APPDATA%\muesli\logs\muesli-*.log` slice and confirm no fresh `ERROR`, `Unhandled UI exception`, or `XamlParseException`.
+- If the change is packaging-related, also run package smoke tests.
 
 ## Architecture Notes
 - `MainWindow.xaml` — Main UI (sidebar, pages, dictation list)
