@@ -4327,7 +4327,11 @@ public sealed record MeetingItem(
     int WordCount = 0,
     string TemplateName = "",
     Dictionary<string, string>? SpeakerAliases = null,
-    List<string>? HealthWarnings = null)
+    List<string>? HealthWarnings = null,
+    MeetingSessionState SessionState = MeetingSessionState.Completed,
+    string ManualNotes = "",
+    PostMeetingAutomationResult? AutomationResult = null,
+    bool RecoveredFromInterruption = false)
 {
     public string Metadata => $"{CreatedAt:yyyy-MM-dd HH:mm} • {DurationLabel}";
 
